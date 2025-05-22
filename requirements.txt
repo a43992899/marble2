@@ -1,0 +1,11 @@
+# conda install ffmpeg
+lightning==2.2.5
+jsonargparse[signatures]>=4.27.7
+albumentations==1.4.4
+transformers==4.42
+einops
+requests
+librosa
+omegaconf
+wandb
+fairseq # pip install pip==24.0
