@@ -1,6 +1,6 @@
 import torch
-from benchmark.core.registry import register
-from benchmark.core.base_encoder import BaseEncoder
+from marble.core.registry import register
+from marble.core.base_encoder import BaseEncoder
 
 @register("encoder", "identity")
 class IdentityEncoder(BaseEncoder):

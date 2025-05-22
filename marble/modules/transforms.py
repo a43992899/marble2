@@ -3,8 +3,8 @@ import torch
 import random
 import torchaudio
 
-from benchmark.core.base_transform import BaseTransform
-from benchmark.core.registry import register
+from marble.core.base_transform import BaseTransform
+from marble.core.registry import register
 
 @register("transforms", "random_crop")
 class RandomCrop(BaseTransform):

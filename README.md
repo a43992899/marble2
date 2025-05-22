@@ -3,9 +3,7 @@
 |── configs
 |   |── probe.MERT-v1-95M.GTZANGenre.yaml
 |── requirements.txt
-|── pyproject.toml
-|── .gitignore
-|── benchmark
+|── marble
 |   |── encoders
 |   |   |── Qwen2AudioEncoder
 |   |   |── MuQ
@@ -49,15 +47,12 @@
 |   |   |   |── fewshot.py
 |   |   |   |── decoder.py
 |   |   |   |── datamodule.py
+|── pyproject.toml
+|── .gitignore
 |── README.md
 |── scripts
+|   |── print_filetree.sh
 |   |── utils.py
-|── marble_benchmark.egg-info
-|   |── PKG-INFO
-|   |── top_level.txt
-|   |── dependency_links.txt
-|   |── requires.txt
-|   |── SOURCES.txt
 |── cli.py
 
 ```

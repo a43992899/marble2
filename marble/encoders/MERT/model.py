@@ -3,9 +3,9 @@ import torch.nn as nn
 from transformers import Wav2Vec2FeatureExtractor
 
 from MusicHubert import MusicHubertModel
-from benchmark.core.registry import register
-from benchmark.core.base_encoder import BaseEncoder
-from benchmark.core.base_transform import BaseTransform
+from marble.core.registry import register
+from marble.core.base_encoder import BaseEncoder
+from marble.core.base_transform import BaseTransform
 
 @register("encoder", "MERT-v1-95M")
 class MERT_v1_95M_Encoder(BaseEncoder):

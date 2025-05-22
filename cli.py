@@ -1,6 +1,6 @@
 # ssl_bench/cli.py
 from lightning.pytorch.cli import LightningCLI
-from benchmark.core import registry   # 确保 import 触发所有 @register
+from marble.core import registry   # 确保 import 触发所有 @register
 
 
 class BenchmarkCLI(LightningCLI):

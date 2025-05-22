@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from benchmark.core.registry import register
-from benchmark.core.base_decoder import BaseDecoder
+from marble.core.registry import register
+from marble.core.base_decoder import BaseDecoder
 
 
 class MLPDecoder(BaseDecoder):
