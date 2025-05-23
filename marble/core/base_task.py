@@ -1,4 +1,4 @@
-# core/base_task.py
+# marble/core/base_task.py
 
 import torch
 import torch.nn as nn
@@ -16,9 +16,13 @@ class BaseTask(LightningModule, ABC):
     """
 
     def __init__(self,
-                 encoder: nn.Module,
-                 decoder: nn.Module,
-                 metrics: Dict[str, torchmetrics.Metric],
+                 encoder,
+                 decoders,
+                 emb_transforms,
+                 losses,
+                 metrics,
+                 sample_rate,
+                 use_ema=False,
                  **kwargs):
         """
         Initializes the task with encoder, decoder, and metrics.
@@ -31,7 +35,9 @@ class BaseTask(LightningModule, ABC):
         """
         super().__init__()
         self.encoder = encoder
-        self.decoder = decoder
+        self.emb_transforms = emb_transforms # list of modules
+        self.emb_transforms = nn.ModuleList(emb_transforms)
+        self.decoder = decoders
         self.metrics = torch.nn.ModuleDict(metrics)
         self.kwargs = kwargs
 
@@ -46,7 +52,17 @@ class BaseTask(LightningModule, ABC):
         Returns:
             torch.Tensor: The task output (e.g., logits, predictions).
         """
-        pass
+        # Pass through encoder
+        x = self.encoder(x)
+        
+        # Apply transformations
+        for transform in self.emb_transforms:
+            x = transform(x)
+        
+        # Pass through decoder
+        logits = self.decoder(x)
+        
+        return logits
 
     def training_step(self, batch, batch_idx):
         """
@@ -62,7 +78,7 @@ class BaseTask(LightningModule, ABC):
         x, y = batch
         logits = self(x)
         loss = self.loss_fn(logits, y)
-        self.log('train_loss', loss, prog_bar=True)
+        self.log('train/loss', loss, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -80,17 +96,7 @@ class BaseTask(LightningModule, ABC):
         logits = self(x)
         for name, metric in self.metrics.items():
             self.log(f"val/{name}", metric(logits, y), prog_bar=True)
-        return {"val_loss": self.loss_fn(logits, y)}
-
-    def configure_optimizers(self):
-        """
-        Configures the optimizer for the model.
-        
-        Returns:
-            torch.optim.Optimizer: The optimizer.
-        """
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
-        return optimizer
+        return {"val/loss": self.loss_fn(logits, y)}
 
     def loss_fn(self, logits, labels):
         """
@@ -103,4 +109,4 @@ class BaseTask(LightningModule, ABC):
         Returns:
             torch.Tensor: The computed loss.
         """
-        return torch.nn.functional.cross_entropy(logits, labels)
+        return NotImplementedError("Loss function not implemented. Please implement in subclass.")

@@ -1,3 +1,4 @@
+# marble/core/utils.py
 import importlib
 
 def get_obj_from_str(string, reload=False):
@@ -9,6 +10,6 @@ def get_obj_from_str(string, reload=False):
 
 
 def instantiate_from_config(config):
-    if not "target" in config:
-        raise KeyError("Expected key `target` to instantiate.")
-    return get_obj_from_str(config["target"])(**config.get("params", dict()))
+    if not "class_path" in config:
+        raise KeyError("Expected key `class_path` to instantiate.")
+    return get_obj_from_str(config["class_path"])(**config.get("init_args", dict()))

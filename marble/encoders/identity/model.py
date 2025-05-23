@@ -1,8 +1,6 @@
 import torch
-from marble.core.registry import register
 from marble.core.base_encoder import BaseEncoder
 
-@register("encoder", "identity")
 class IdentityEncoder(BaseEncoder):
     """
     A no-op encoder that returns its input unchanged.

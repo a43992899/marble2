@@ -1,42 +1,55 @@
 # tasks/gtzan_genre/decoder.py
+from typing import Optional, Callable
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from marble.core.registry import register
 from marble.core.base_decoder import BaseDecoder
 
 
 class MLPDecoder(BaseDecoder):
-    def __init__(self, in_dim: int, out_dim: int = 10, hidden_layers: list = [512], activation_fn: nn.Module = nn.ReLU):
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int = 10,
+        hidden_layers: list = [512],
+        activation_fn: Optional[Callable[..., nn.Module]] = nn.ReLU,
+        dropout: float = 0.5
+    ):
         """
-        MLP Decoder with customizable layers and activation functions.
+        MLP Decoder with customizable layers, optional activation functions, and dropout.
 
         Args:
             in_dim (int): The input dimension (e.g., size of embedding).
             out_dim (int): Number of output classes.
-            hidden_layers (list): List of integers specifying the number of neurons in each hidden layer.
-            activation_fn (nn.Module): Activation function to use (default is ReLU).
+            hidden_layers (list): List of integers specifying neurons in each hidden layer.
+            activation_fn (Optional[Callable]): Activation function class to use (e.g., nn.ReLU). Set to None to disable activations.
+            dropout (float): Dropout probability after each activation (default is 0.5).
         """
         super().__init__(in_dim, out_dim)
-        
+
         layers = []
         prev_dim = in_dim
-        
+
         # Create hidden layers
         for hidden_dim in hidden_layers:
             layers.append(nn.Linear(prev_dim, hidden_dim))
-            layers.append(activation_fn())
+            if activation_fn is not None:
+                layers.append(activation_fn())
+                if dropout > 0.0:
+                    layers.append(nn.Dropout(dropout))
             prev_dim = hidden_dim
-        
+
         # Output layer
         layers.append(nn.Linear(prev_dim, out_dim))
-        
-        # Create the sequential model
+
+        # Build sequential model
         self.net = nn.Sequential(*layers)
 
     def forward(self, emb, *_):
-        # emb: [B, T', D] → mean-pool → [B, D]
+        # emb: [B, T', D] -> mean-pool -> [B, D]
+        assert emb.dim() == 3, f"Expected 3D tensor [B, T', D], got {emb.dim()}D tensor"
         emb = emb.mean(dim=1)
         return self.net(emb)
     
@@ -55,6 +68,7 @@ class LinearDecoder(BaseDecoder):
 
     def forward(self, emb, *_):
         # emb: [B, T', D] → mean-pool → [B, D]
+        assert emb.dim() == 3, f"Expected 3D tensor [B, T', D], got {emb.dim()}D tensor"
         emb = emb.mean(dim=1)
         return self.net(emb)
 

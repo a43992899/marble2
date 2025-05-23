@@ -1,95 +1,130 @@
-seed_everything: true
+seed_everything: 42
+ckpt_path: null # to resume
+
 trainer:
   accelerator: gpu
   strategy: ddp_find_unused_parameters_true
   devices: [0]
   num_nodes: 1
   precision: 16-mixed
-  max_epochs: 50
+  max_epochs: 100
   check_val_every_n_epoch: 1
-  num_sanity_val_steps: 1
-  log_every_n_steps: 10
+  num_sanity_val_steps: 10
+  log_every_n_steps: 50
 
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        dirpath: "/aifs4su/mmcode/codeclm/checkpoints/mot/simvq/exp1.6" # Please specify your own path
-        save_top_k: -1 # save all checkpoints
+        dirpath: "./output/probe.GTZANGenre.MERT-v1-95M/checkpoints/" # Please specify your own path
+        save_top_k: 1 # -1 to save all checkpoints
     - class_path: lightning.pytorch.callbacks.LearningRateMonitor
       init_args:
         logging_interval: step
+    - class_path: EarlyStopping           # LightningCLI 可以直接识别回调名称
+      init_args:
+        monitor: "val/loss"               # 要监控的 metric 名称
+        patience: 20                       # 在多少次验证后无改进就停止
+        mode: "min"                       # “val_loss” 下降时才算改进
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
-      project: "mot"
-      name: "exp1.6"
-      save_dir: "/aifs4su/mmcode/codeclm/checkpoints/mot/simvq/exp1.6"
+      project: "marble"
+      name: "probe.GTZANGenre.MERT-v1-95M"
+      save_dir: "./output/probe.GTZANGenre.MERT-v1-95M/"
+
 
 model:
-  class_path: taming.models.vq_audio.VQModel
+  class_path: core.tasks.GTZANGenre.probe.ProbeAudioTask
   init_args:
-    ddconfig:
-      causal: true
-      dimension: 512
-    
-    quantconfig:
-      target: taming.modules.vqvae.quantize.SimVQ1D
-      params:
-        n_e: 65536
-        e_dim: 512
-        beta: 0.25
-        legacy: false
-
-    lossconfig:
-      target: taming.modules.losses.stft.VQSTFTWithDiscriminator
-      params:
-        disc_conditional: False
-        disc_in_channels: 1
-        disc_start: 0 # from 0 epoch
-        codebook_enlarge_ratio: 0
-        codebook_enlarge_steps: 2000
-        sample_rate: 24000
-        commit_weight: 250.0
-        gen_loss_weight: 1.0
-        mel_loss_coeff: 45.0
-        mrd_loss_coeff: 1.0
-    
     sample_rate: 24000
-    target_bandwidths: None
-    audio_normalize: false
-    segment: None
-    learning_rate: 1e-4
-    scheduler_type: "None"
-    use_ema: true
+    use_ema: false
 
+    encoder:
+      class_path: core.encoders.MERT.model.MERT_v1_95M_Encoder
+      init_args:
+        pre_trained_folder: null
+        train_mode: freeze  # also supports lora, or full
+        force_half: false
+        use_autocast: true
+        preprocess_in_forward: false
+      
+    emb_transforms:
+      - class_path: marble.modules.transforms.LayerSelector
+        init_args:
+          layers: [7]  # something like [1, 3, "10..72"]
+      - class_path: marble.modules.transforms.TimeAvgPool # (batch_size, num_layers, 1, hidden_size)
+    
+    decoders:
+      - class_path: marble.modules.decoders.MLPDecoder
+        init_args:
+          in_dim: 512
+          out_dim: 10 # 10 genres
+          hidden_layers: [512]
+          activation_fn: torch.nn.ReLU
+          dropout: 0.2
+
+    losses:
+      - class_path: torch.nn.CrossEntropyLoss
+        init_args:
+          reduction: mean
+
+    metrics:
+      train:
+        acc:
+          class_path: torchmetrics.Accuracy
+          init_args:
+            num_classes: 10
+            task: multiclass
+      val:
+        acc:
+          class_path: torchmetrics.Accuracy
+          init_args:
+            num_classes: 10
+            task: multiclass
+      test:
+        acc:
+          class_path: torchmetrics.Accuracy
+          init_args:
+            num_classes: 10
+            task: multiclass
+    
 data:
-  class_path: main.PadDataModuleFromConfig
+  class_path: marble.tasks.GTZANGenre.datamodule.GTZANGenreDataModule
   init_args:
-    batch_size: 20
+    batch_size: 64
     num_workers: 8
     train:
-      target: taming.data.annealing.AnnealingTrain
-      params:
-        config:
-          sample_rate: 24000
-          channels: 1
-          clip_seconds: 3
-          filelist: /aifs4su/mmdata/rawdata/codeclm/music/ytblrc/train.txt
-    validation:
-      target: taming.data.annealing.AnnealingDev
-      params:
-        config:
-          sample_rate: 24000
-          channels: 1
-          clip_seconds: 3
-          filelist: /aifs4su/mmdata/rawdata/codeclm/music/ytblrc/test.txt
+      class_path: marble.tasks.GTZANGenre.datamodule.GTZANGenreAudioTrain
+      init_args:
+        sample_rate: 24000
+        channels: 1
+        clip_seconds: 5
+        filelist: /aifs4su/mmdata/rawdata/codeclm/music/ytblrc/train.txt
+    val:
+      class_path: marble.tasks.GTZANGenre.datamodule.GTZANGenreAudioVal
+      init_args:
+        sample_rate: 24000
+        channels: 1
+        clip_seconds: 5
+        filelist: /aifs4su/mmdata/rawdata/codeclm/music/ytblrc/test.txt
     test:
-      target: taming.data.annealing.AnnealingTest
-      params:
-        config:
-          sample_rate: 24000
-          channels: 1
-          clip_seconds: -1
-          filelist: /aifs4su/mmdata/rawdata/codeclm/music/ytblrc/test.txt
+      class_path: taming.data.annealing.AnnealingTest
+      init_args:
+        sample_rate: 24000
+        channels: 1
+        clip_seconds: -1
+        filelist: /aifs4su/mmdata/rawdata/codeclm/music/ytblrc/test.txt
 
-ckpt_path: null # to resume
+optimizer:
+  class_path: torch.optim.Adam
+  init_args:
+    lr: 5e-3
+
+lr_scheduler:
+  class_path: torch.optim.lr_scheduler.ReduceLROnPlateau
+  init_args:
+    mode: "min"
+    factor: 0.1
+    patience: 6
+  # 额外指定监控哪个 metric
+  monitor: "val/loss"

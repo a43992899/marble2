@@ -1,23 +1,134 @@
 import argparse
+from contextlib import contextmanager
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import lightning as pl
 import torchmetrics
+from torchmetrics import MetricCollection
+
 from pytorch_lightning.utilities.parsing import lightning_getattr
 
-from core.utils import instantiate_from_config
-from core.registry import register
-from core.base_task import BaseTask
-from core import registry    
+from marble.core.base_task import BaseTask  
+from marble.core.utils import instantiate_from_config
+from marble.modules.ema import LitEma as EMA
 
 
-class ProbeCachedFeatTask(pl.LightningModule):
+class ProbeAudioTask(BaseTask):
+    """
+    A probing task for GTZAN genre classification using MetricCollection.
+    """
+
+    def __init__(
+        self,
+        sample_rate: int,
+        use_ema: bool,
+        encoder: dict,
+        emb_transforms: list[dict],
+        decoders: list[dict],
+        losses: list[dict],
+        metrics: dict,
+    ):
+        super().__init__()
+        # automatically log these args
+        self.save_hyperparameters("sample_rate", "use_ema")
+
+        self.sample_rate = sample_rate
+        self.use_ema = use_ema
+
+        # instantiate sub‐modules from configs
+        self.encoder = instantiate_from_config(encoder)
+        self.emb_transforms = nn.Sequential(
+            *[instantiate_from_config(cfg) for cfg in emb_transforms]
+        )
+        self.decoders = nn.ModuleList([
+            instantiate_from_config(cfg) for cfg in decoders
+        ])
+        self.loss_fns = [
+            instantiate_from_config(cfg) for cfg in losses
+        ]
+
+        # build MetricCollections for each split
+        train_mc = MetricCollection(
+            {name: instantiate_from_config(cfg) for name, cfg in metrics["train"].items()},
+            prefix="train/"
+        )
+        val_mc = MetricCollection(
+            {name: instantiate_from_config(cfg) for name, cfg in metrics["val"].items()},
+            prefix="val/"
+        )
+        test_mc = MetricCollection(
+            {name: instantiate_from_config(cfg) for name, cfg in metrics["test"].items()},
+            prefix="test/"
+        )
+
+        # register them as modules so Lightning knows about their parameters/buffers
+        self.add_module("train_metrics", train_mc)
+        self.add_module("val_metrics",   val_mc)
+        self.add_module("test_metrics",  test_mc)
+
+        self.train_metrics = train_mc
+        self.val_metrics = val_mc
+        self.test_metrics = test_mc
+
+        # optional EMA on encoder weights
+        if self.use_ema:
+            self.ema = EMA(self.encoder)
+
+    def forward(self, waveforms: torch.Tensor) -> torch.Tensor:
+        # waveforms: (batch, channels, time)
+        feats = self.encoder(waveforms)
+        emb = feats.get("embeddings", feats) if isinstance(feats, dict) else feats
+
+        # ensure 3D tensor for transforms
+        if emb.ndim == 2:
+            emb = emb.unsqueeze(1)
+        emb = self.emb_transforms(emb)
+
+        # flatten to (batch, hidden)
+        emb = emb.view(emb.size(0), -1)
+
+        # pass through decoders
+        logits = [dec(emb) for dec in self.decoders]
+        return logits[0] if len(logits) == 1 else logits
+
+    def _shared_step(self, batch, batch_idx, stage: str):
+        waveforms, labels = batch
+        logits = self(waveforms)
+
+        # compute total loss
+        losses = [fn(logits, labels) for fn in self.loss_fns]
+        loss = sum(losses)
+        self.log(f"{stage}/loss", loss, prog_bar=True, on_step=False, on_epoch=True)
+
+        # update + log metrics
+        mc: MetricCollection = getattr(self, f"{stage}_metrics")
+        metrics_out = mc(logits, labels)
+        self.log_dict(metrics_out, prog_bar=(stage=="val"), on_step=False, on_epoch=True)
+
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        loss = self._shared_step(batch, batch_idx, "train")
+        return loss
+
+    def validation_step(self, batch, batch_idx):
+        self._shared_step(batch, batch_idx, "val")
+
+    def test_step(self, batch, batch_idx):
+        self._shared_step(batch, batch_idx, "test")
+
+    def on_train_batch_end(self, outputs, batch, batch_idx) -> None:
+        if self.use_ema:
+            self.ema.update()
+
+    def configure_optimizers(self):
+        # delegate to BaseTask / LightningCLI
+        return super().configure_optimizers()
 
 
-
-class MLPProberBase(pl.LightningModule):
+class MLPProberBase(BaseTask):
     """Base MLP prober
     """
     def __init__(self, cfg):
