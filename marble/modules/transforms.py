@@ -199,6 +199,7 @@ class LayerSelector(BaseEmbTransform):
     def __init__(self, layers: Sequence[Union[int, str]]):
         super().__init__()
         self.layers = self._parse_layers(layers)
+        print(f"LayerSelector initialized with layers: {self.layers}")
 
     def _parse_layers(self, layers):
         parsed = []

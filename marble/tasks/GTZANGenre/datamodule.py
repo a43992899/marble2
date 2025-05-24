@@ -14,8 +14,20 @@ from marble.core.utils import instantiate_from_config
 from marble.modules.transforms import AudioTransformDataset
 
 
-LABEL2IDX = {'blues': 0, 'classical': 1, 'country': 2, 'disco': 3, 'hiphop': 4, 'jazz': 5, 'metal': 6, 'pop': 7, 'reggae': 8, 'rock': 9}
-EXAMPLE_JSONL = {"audio_path": "data/GTZAN/genres/blues/blues.00012.wav", "label": "blues", "duration": 30.013333333333332, "sample_rate": 22050, "num_samples": 661794, "bit_depth": 16, "channels": 1}
+LABEL2IDX = {
+    'blues': 0, 'classical': 1, 'country': 2, 'disco': 3,
+    'hiphop': 4, 'jazz': 5, 'metal': 6, 'pop': 7,
+    'reggae': 8, 'rock': 9
+}
+EXAMPLE_JSONL = {
+    "audio_path": "data/GTZAN/genres/blues/blues.00012.wav",
+    "label": "blues",
+    "duration": 30.013333333333332,
+    "sample_rate": 22050,
+    "num_samples": 661794,
+    "bit_depth": 16,
+    "channels": 1
+}
 
 class _GTZANGenreAudioBase(Dataset):
     """
@@ -29,6 +41,7 @@ class _GTZANGenreAudioBase(Dataset):
         clip_seconds: float,
         jsonl: str,
         channel_mode: str = "first",
+        min_clip_ratio: float = 1.0,
     ):
         self.sample_rate = sample_rate
         self.channels = channels
@@ -37,6 +50,7 @@ class _GTZANGenreAudioBase(Dataset):
             raise ValueError(f"Unknown channel_mode: {channel_mode}")
         self.clip_seconds = clip_seconds
         self.clip_len_target = int(self.clip_seconds * self.sample_rate)
+        self.min_clip_ratio = min_clip_ratio
 
         # 读取元数据
         with open(jsonl, 'r') as f:
@@ -50,11 +64,25 @@ class _GTZANGenreAudioBase(Dataset):
             # 复用同采样率的 resampler
             if orig_sr != self.sample_rate and orig_sr not in self.resamplers:
                 self.resamplers[orig_sr] = torchaudio.transforms.Resample(orig_sr, self.sample_rate)
+
             orig_clip_frames = int(self.clip_seconds * orig_sr)
             orig_channels = info['channels']
-            n_slices = math.ceil(info['num_samples'] / orig_clip_frames)
+            total_samples = info['num_samples']
+
+            # 计算整片数量和残片
+            n_full = total_samples // orig_clip_frames
+            rem = total_samples - n_full * orig_clip_frames
+            # 根据 min_clip_ratio 决定是否保留最后残片
+            if rem / orig_clip_frames >= self.min_clip_ratio:
+                n_slices = n_full + 1
+            else:
+                n_slices = n_full
+
             for slice_idx in range(n_slices):
-                self.index_map.append((file_idx, slice_idx, orig_sr, orig_clip_frames, orig_channels))
+                self.index_map.append(
+                    (file_idx, slice_idx, orig_sr, orig_clip_frames, orig_channels)
+                )
+
 
     def __len__(self):
         return len(self.index_map)

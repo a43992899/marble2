@@ -17,7 +17,9 @@ trainer:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
         dirpath: "./output/probe.GTZANGenre.MERT-v1-95M/checkpoints/" # Please specify your own path
+        filename: "best"
         save_top_k: 1 # -1 to save all checkpoints
+    - class_path: marble.modules.callbacks.LoadLatestCheckpointCallback # for testing
     - class_path: lightning.pytorch.callbacks.LearningRateMonitor
       init_args:
         logging_interval: step
@@ -107,6 +109,7 @@ data:
         sample_rate: 24000
         channels: 1
         clip_seconds: 30
+        min_clip_ratio: 0.8 # at least 80% of the clip length
         channel_mode: first # first, random, mix
         jsonl: data/GTZAN/GTZANGenre.train.jsonl
     val:
@@ -115,6 +118,7 @@ data:
         sample_rate: 24000
         channels: 1
         clip_seconds: 30
+        min_clip_ratio: 0.8
         channel_mode: first
         jsonl: data/GTZAN/GTZANGenre.val.jsonl
     test:
@@ -123,11 +127,12 @@ data:
         sample_rate: 24000
         channels: 1
         clip_seconds: 30
+        min_clip_ratio: 0.8
         channel_mode: first
         jsonl: data/GTZAN/GTZANGenre.test.jsonl
 
 optimizer:
-  class_path: torch.optim.AdamW
+  class_path: torch.optim.Adam
   init_args:
     lr: 5e-3
 
