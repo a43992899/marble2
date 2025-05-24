@@ -13,6 +13,33 @@ from marble.core.base_transform import BaseEmbTransform, BaseAudioTransform
 
 
 ############################## Audio Transforms ##############################
+class AudioTransformDataset(torch.utils.data.Dataset):
+    """在原始 waveform 上依次调用 BaseAudioTransform 实例化对象。"""
+    def __init__(self, base_dataset, transforms: list[BaseAudioTransform]):
+        self.base = base_dataset
+        self.transforms = transforms
+        # 假设所有子类里都有 sample_rate 属性
+        self.sample_rate = getattr(base_dataset, "sample_rate", None)
+
+    def __len__(self):
+        return len(self.base)
+
+    def __getitem__(self, idx):
+        # 原来 __getitem__ 返回 (waveform, label, path)
+        waveform, label, path = self.base[idx]
+        # 构造成 transform 接受的 dict
+        sample = {
+            "waveform": waveform.squeeze(0) if waveform.ndim == 2 and waveform.shape[0] == 1 else waveform,
+            "sampling_rate": self.sample_rate
+        }
+        # 依次调用每个 transform
+        for t in self.transforms:
+            sample = t(sample)
+        # 从返回的 dict 里取出新 waveform
+        new_wav = sample["waveform"]
+        return new_wav, label, path
+
+
 class AudioLayerNorm(BaseAudioTransform):
     """
     Normalize each channel of waveform to zero‐mean, unit‐variance over time.

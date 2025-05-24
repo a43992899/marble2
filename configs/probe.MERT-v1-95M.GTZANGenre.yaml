@@ -2,8 +2,9 @@ seed_everything: 42
 ckpt_path: null # to resume
 
 trainer:
+  fast_dev_run: true
   accelerator: gpu
-  strategy: ddp_find_unused_parameters_true
+  strategy: ddp # or ddp_find_unused_parameters
   devices: [0]
   num_nodes: 1
   precision: 16-mixed
@@ -20,7 +21,7 @@ trainer:
     - class_path: lightning.pytorch.callbacks.LearningRateMonitor
       init_args:
         logging_interval: step
-    - class_path: EarlyStopping           # LightningCLI 可以直接识别回调名称
+    - class_path: lightning.pytorch.callbacks.early_stopping.EarlyStopping
       init_args:
         monitor: "val/loss"               # 要监控的 metric 名称
         patience: 20                       # 在多少次验证后无改进就停止
@@ -34,18 +35,17 @@ trainer:
 
 
 model:
-  class_path: core.tasks.GTZANGenre.probe.ProbeAudioTask
+  class_path: marble.tasks.GTZANGenre.probe.ProbeAudioTask
   init_args:
     sample_rate: 24000
     use_ema: false
 
     encoder:
-      class_path: core.encoders.MERT.model.MERT_v1_95M_Encoder
+      class_path: marble.encoders.MERT.model.MERT_v1_95M_Encoder
       init_args:
         pre_trained_folder: null
         train_mode: freeze  # also supports lora, or full
         force_half: false
-        use_autocast: true
         preprocess_in_forward: false
       
     emb_transforms:
@@ -57,10 +57,11 @@ model:
     decoders:
       - class_path: marble.modules.decoders.MLPDecoder
         init_args:
-          in_dim: 512
+          in_dim: 768
           out_dim: 10 # 10 genres
           hidden_layers: [512]
-          activation_fn: torch.nn.ReLU
+          activation_fn: 
+            class_path: torch.nn.ReLU
           dropout: 0.2
 
     losses:
@@ -93,38 +94,47 @@ data:
   init_args:
     batch_size: 64
     num_workers: 8
+
+    audio_transforms:
+      - class_path: marble.encoders.MERT.model.MERT_v1_95M_FeatureExtractor
+        init_args:
+          pre_trained_folder: null
+          squeeze: true
+
     train:
       class_path: marble.tasks.GTZANGenre.datamodule.GTZANGenreAudioTrain
       init_args:
         sample_rate: 24000
         channels: 1
         clip_seconds: 5
-        filelist: /aifs4su/mmdata/rawdata/codeclm/music/ytblrc/train.txt
+        channel_mode: first # first, random, mix
+        jsonl: data/GTZAN/GTZANGenre.train.jsonl
     val:
       class_path: marble.tasks.GTZANGenre.datamodule.GTZANGenreAudioVal
       init_args:
         sample_rate: 24000
         channels: 1
         clip_seconds: 5
-        filelist: /aifs4su/mmdata/rawdata/codeclm/music/ytblrc/test.txt
+        channel_mode: first
+        jsonl: data/GTZAN/GTZANGenre.val.jsonl
     test:
-      class_path: taming.data.annealing.AnnealingTest
+      class_path: marble.tasks.GTZANGenre.datamodule.GTZANGenreAudioTest
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: -1
-        filelist: /aifs4su/mmdata/rawdata/codeclm/music/ytblrc/test.txt
+        clip_seconds: 5
+        channel_mode: first
+        jsonl: data/GTZAN/GTZANGenre.test.jsonl
 
 optimizer:
-  class_path: torch.optim.Adam
+  class_path: torch.optim.AdamW
   init_args:
     lr: 5e-3
 
 lr_scheduler:
-  class_path: torch.optim.lr_scheduler.ReduceLROnPlateau
+  class_path: lightning.pytorch.cli.ReduceLROnPlateau
   init_args:
     mode: "min"
     factor: 0.1
     patience: 6
-  # 额外指定监控哪个 metric
-  monitor: "val/loss"
+    monitor: "val/loss"

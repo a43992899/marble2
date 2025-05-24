@@ -2,10 +2,9 @@ from typing import Sequence, Dict, Optional, Union, Tuple, List
 
 import torch
 import torch.nn as nn
-from torch.cuda.amp import autocast
 from transformers import Wav2Vec2FeatureExtractor
 
-from MusicHubert import MusicHubertModel
+from marble.encoders.MERT.MusicHubert import MusicHubertModel
 from marble.core.base_encoder import BaseEncoder
 from marble.core.base_transform import BaseAudioTransform
 
@@ -13,7 +12,6 @@ from marble.core.base_transform import BaseAudioTransform
 class MERT_v1_95M_Encoder(BaseEncoder):
     """
     A Hugging Face HuBERT-based wrapper with optional LoRA adapters, full fine-tuning, or freezing.
-    Automatically casts inputs to match model dtype and supports mixed precision via autocast.
     """
 
     NAME = "MERT-v1-95M"
@@ -30,7 +28,6 @@ class MERT_v1_95M_Encoder(BaseEncoder):
         train_mode: str = "freeze",  # one of ["freeze", "full", "lora"]
         force_half: bool = False,
         preprocess_in_forward: bool = False,
-        use_autocast: bool = False,
         lora_r: int = 8,
         lora_alpha: int = 16,
         lora_dropout: float = 0.1,
@@ -44,7 +41,6 @@ class MERT_v1_95M_Encoder(BaseEncoder):
                               or "lora" to freeze base and add LoRA adapters.
             force_half (bool): If True, cast model weights to float16.
             preprocess_in_forward (bool): If True, run feature extraction inside forward().
-            use_autocast (bool): If True, enable torch.cuda.amp.autocast for mixed precision.
             lora_r (int): LoRA adapter rank (only if train_mode="lora").
             lora_alpha (int): LoRA scaling alpha (only if train_mode="lora").
             lora_dropout (float): Dropout probability for LoRA adapters.
@@ -52,7 +48,6 @@ class MERT_v1_95M_Encoder(BaseEncoder):
         super().__init__()
         self.sample_rate = self.SAMPLING_RATE
         self.preprocess_in_forward = preprocess_in_forward
-        self.use_autocast = use_autocast
 
         # Load the Wav2Vec2 feature extractor (normalizes and pads audio)
         self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
@@ -151,22 +146,12 @@ class MERT_v1_95M_Encoder(BaseEncoder):
         model_dtype = next(self.model.parameters()).dtype
         input_values = input_values.to(device=self.model.device, dtype=model_dtype)
 
-        # Run the model, optionally under autocast for mixed precision
-        if self.use_autocast and self.model.device.type != "cpu":
-            with autocast(device_type=self.model.device.type, dtype=model_dtype):
-                outputs = self.model(
-                    input_values,
-                    output_hidden_states=output_hidden_states,
-                    output_attentions=output_attentions,
-                    **kwargs
-                )
-        else:
-            outputs = self.model(
-                input_values,
-                output_hidden_states=output_hidden_states,
-                output_attentions=output_attentions,
-                **kwargs
-            )
+        outputs = self.model(
+            input_values,
+            output_hidden_states=output_hidden_states,
+            output_attentions=output_attentions,
+            **kwargs
+        )
 
         return outputs
 
@@ -180,12 +165,13 @@ class MERT_v1_95M_FeatureExtractor(BaseAudioTransform):
     NUM_FEATURES = 768
     N_TRANSFORMER_LAYERS = 12
     PROCESSOR_NORMALIZE = True
-    def __init__(self, pre_trained_folder: str = None):
+    def __init__(self, pre_trained_folder: str = None, squeeze: bool = True) -> None:
         super().__init__()
         self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained(
             self.HUGGINGFACE_MODEL_NAME if pre_trained_folder is None else pre_trained_folder,
             do_normalize=self.PROCESSOR_NORMALIZE,
         )
+        self.squeeze = squeeze  # If True, squeeze the output to remove extra dimensions
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         x = sample["waveform"]
@@ -200,7 +186,9 @@ class MERT_v1_95M_FeatureExtractor(BaseAudioTransform):
             return_tensors="pt",
             padding=True,
         )
-        sample["waveform"] = proc.input_values
+        sample["waveform"] = proc.input_values # [batch_size, num_samples] but batch_size=1
+        if self.squeeze:
+            sample["waveform"] = sample["waveform"].squeeze(0)
         return sample
 
 

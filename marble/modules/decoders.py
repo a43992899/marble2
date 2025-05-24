@@ -1,109 +1,101 @@
 # tasks/gtzan_genre/decoder.py
-from typing import Optional, Callable
+from typing import Optional, Callable, Dict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from einops import rearrange, reduce
 
 from marble.core.base_decoder import BaseDecoder
+from marble.core.utils import instantiate_from_config
 
 
 class MLPDecoder(BaseDecoder):
+    """
+    MLP Decoder with customizable layers, optional activation functions, and dropout.
+    Supports input tensors of shape [B, L, T, H], where H is the embedding dimension.
+    Uses einops for pooling operations.
+    """
     def __init__(
         self,
         in_dim: int,
         out_dim: int = 10,
         hidden_layers: list = [512],
-        activation_fn: Optional[Callable[..., nn.Module]] = nn.ReLU,
+        activation_fn: Optional[Dict] = None, # e.g. {"class_path": "torch.nn.ReLU"}
         dropout: float = 0.5
     ):
-        """
-        MLP Decoder with customizable layers, optional activation functions, and dropout.
-
-        Args:
-            in_dim (int): The input dimension (e.g., size of embedding).
-            out_dim (int): Number of output classes.
-            hidden_layers (list): List of integers specifying neurons in each hidden layer.
-            activation_fn (Optional[Callable]): Activation function class to use (e.g., nn.ReLU). Set to None to disable activations.
-            dropout (float): Dropout probability after each activation (default is 0.5).
-        """
         super().__init__(in_dim, out_dim)
 
         layers = []
         prev_dim = in_dim
 
-        # Create hidden layers
         for hidden_dim in hidden_layers:
             layers.append(nn.Linear(prev_dim, hidden_dim))
             if activation_fn is not None:
-                layers.append(activation_fn())
-                if dropout > 0.0:
-                    layers.append(nn.Dropout(dropout))
+                activation_fn = instantiate_from_config(activation_fn)
+                layers.append(activation_fn)
+            if dropout > 0.0:
+                layers.append(nn.Dropout(dropout))
             prev_dim = hidden_dim
 
-        # Output layer
         layers.append(nn.Linear(prev_dim, out_dim))
-
-        # Build sequential model
         self.net = nn.Sequential(*layers)
 
     def forward(self, emb, *_):
-        # emb: [B, T', D] -> mean-pool -> [B, D]
-        assert emb.dim() == 3, f"Expected 3D tensor [B, T', D], got {emb.dim()}D tensor"
-        emb = emb.mean(dim=1)
+        # emb: [B, L, T, H] -> mean-pool across L and T -> [B, H]
+        assert emb.dim() == 4, f"Expected 4D tensor [B, L, T, H], got {emb.dim()}D tensor"
+        emb = reduce(emb, 'b l t h -> b h', 'mean')
         return self.net(emb)
     
-    
-class LinearDecoder(BaseDecoder):
-    def __init__(self, in_dim: int, out_dim: int = 10):
-        """
-        Linear Decoder.
 
-        Args:
-            in_dim (int): The input dimension (e.g., size of embedding).
-            out_dim (int): Number of output classes.
-        """
+class LinearDecoder(BaseDecoder):
+    """
+    Linear Decoder supporting input tensors of shape [B, L, T, H].
+    Uses einops for pooling operations.
+    """
+    def __init__(self, in_dim: int, out_dim: int = 10):
         super().__init__(in_dim, out_dim)
         self.net = nn.Linear(in_dim, out_dim)
 
     def forward(self, emb, *_):
-        # emb: [B, T', D] → mean-pool → [B, D]
-        assert emb.dim() == 3, f"Expected 3D tensor [B, T', D], got {emb.dim()}D tensor"
-        emb = emb.mean(dim=1)
+        # emb: [B, L, T, H] -> mean-pool across L and T -> [B, H]
+        assert emb.dim() == 4, f"Expected 4D tensor [B, L, T, H], got {emb.dim()}D tensor"
+        emb = reduce(emb, 'b l t h -> b h', 'mean')
         return self.net(emb)
 
 
 class LSTMDecoder(BaseDecoder):
-    def __init__(self, in_dim: int, out_dim: int = 10, hidden_size: int = 128, num_layers: int = 2):
-        """
-        LSTM Decoder for sequence data.
-
-        Args:
-            in_dim (int): The input dimension (e.g., size of embedding).
-            out_dim (int): Number of output classes.
-            hidden_size (int): Size of LSTM hidden state.
-            num_layers (int): Number of LSTM layers.
-        """
+    """
+    LSTM Decoder for 4D sequence data.
+    Supports input tensors of shape [B, L, T, H].
+    Uses einops for reshaping.
+    """
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int = 10,
+        hidden_size: int = 128,
+        num_layers: int = 2
+    ):
         super().__init__(in_dim, out_dim)
-        
         self.lstm = nn.LSTM(in_dim, hidden_size, num_layers, batch_first=True)
         self.fc = nn.Linear(hidden_size, out_dim)
 
     def forward(self, emb, *_):
-        # emb: [B, T', D]
-        lstm_out, _ = self.lstm(emb)  # LSTM output: [B, T', hidden_size]
-        last_hidden = lstm_out[:, -1, :]  # Take the last time-step's hidden state
+        # emb: [B, L, T, H] -> flatten to [B, L*T, H]
+        assert emb.dim() == 4, f"Expected 4D tensor [B, L, T, H], got {emb.dim()}D tensor"
+        emb_flat = rearrange(emb, 'b l t h -> b (l t) h')
+        lstm_out, _ = self.lstm(emb_flat)
+        last_hidden = lstm_out[:, -1, :]
         return self.fc(last_hidden)
 
 
-
-# 尝试导入 Flash Attention 的实现，若不可用则回退到 PyTorch 原生 scaled_dot_product_attention
+# Attempt to import Flash Attention implementation; fallback to native PyTorch scaled_dot_product_attention
 try:
     from flash_attn.modules.mha import FlashMHA
 except ImportError:
     FlashMHA = None
 
-# 如果没有安装 flash_attn，实现一个简单的 FlashMHA 回退版本
 if FlashMHA is None:
     class FlashMHA(nn.Module):
         """
@@ -124,40 +116,33 @@ if FlashMHA is None:
         def forward(self, query, key, value, attn_mask=None):
             B, Tq, D = query.shape
             _, Tk, _ = key.shape
-            # 线性投影
             q = self.q_proj(query)
             k = self.k_proj(key)
             v = self.v_proj(value)
-            # 划分多头
-            q = q.view(B, Tq, self.num_heads, self.head_dim).transpose(1, 2)
-            k = k.view(B, Tk, self.num_heads, self.head_dim).transpose(1, 2)
-            v = v.view(B, Tk, self.num_heads, self.head_dim).transpose(1, 2)
-            # 计算 scaled dot-product attention
+            q = rearrange(q, 'b t (h d) -> b h t d', h=self.num_heads)
+            k = rearrange(k, 'b t (h d) -> b h t d', h=self.num_heads)
+            v = rearrange(v, 'b t (h d) -> b h t d', h=self.num_heads)
             out = F.scaled_dot_product_attention(q, k, v, attn_mask, dropout_p=self.dropout, is_causal=False)
-            # 合并多头
-            out = out.transpose(1, 2).contiguous().view(B, Tq, D)
-            # 输出映射
+            out = rearrange(out, 'b h t d -> b t (h d)')
             return self.out_proj(out)
 
 
 class FlashTransformerDecoderLayer(nn.Module):
     """
-    Single layer of Transformer decoder using Flash Attention for both self- and cross-attention.
+    Single layer of Transformer decoder using Flash Attention (or fallback), supports 4D sequence inputs.
     """
-    def __init__(self,
-                 embed_dim: int,
-                 num_heads: int,
-                 ff_hidden_dim: int,
-                 dropout: float = 0.1):
+    def __init__(
+        self,
+        embed_dim: int,
+        num_heads: int,
+        ff_hidden_dim: int,
+        dropout: float = 0.1
+    ):
         super().__init__()
-        # Flash self-attention (或回退)
         self.self_attn = FlashMHA(embed_dim, num_heads, dropout=dropout)
-        # Flash cross-attention (或回退)
         self.cross_attn = FlashMHA(embed_dim, num_heads, dropout=dropout)
-        # 前馈网络
         self.linear1 = nn.Linear(embed_dim, ff_hidden_dim)
         self.linear2 = nn.Linear(ff_hidden_dim, embed_dim)
-        # 层归一化和 dropout
         self.norm1 = nn.LayerNorm(embed_dim)
         self.norm2 = nn.LayerNorm(embed_dim)
         self.norm3 = nn.LayerNorm(embed_dim)
@@ -165,23 +150,21 @@ class FlashTransformerDecoderLayer(nn.Module):
         self.dropout2 = nn.Dropout(dropout)
         self.dropout3 = nn.Dropout(dropout)
 
-    def forward(self,
-                x: torch.Tensor,
-                memory: torch.Tensor,
-                tgt_mask: torch.Tensor = None,
-                memory_mask: torch.Tensor = None):
-        # x: [B, T_tgt, D], memory: [B, T_src, D]
-        # 1) Self-attention
+    def forward(
+        self,
+        x,           # [B, seq_len, H]
+        memory,      # [B, mem_seq_len, H]
+        tgt_mask=None,
+        memory_mask=None
+    ):
         residual = x
         x2 = self.self_attn(x, x, x, attn_mask=tgt_mask)
         x = residual + self.dropout1(x2)
         x = self.norm1(x)
-        # 2) Cross-attention
         residual = x
         x2 = self.cross_attn(x, memory, memory, attn_mask=memory_mask)
         x = residual + self.dropout2(x2)
         x = self.norm2(x)
-        # 3) 前馈
         residual = x
         x2 = self.linear2(self.dropout3(F.relu(self.linear1(x))))
         x = residual + self.dropout3(x2)
@@ -191,44 +174,51 @@ class FlashTransformerDecoderLayer(nn.Module):
 
 class TransformerDecoder(BaseDecoder):
     """
-    Transformer Decoder with Flash Attention (或回退)，用于 ASR 任务。
+    Transformer Decoder with Flash Attention (or fallback), supports input tensors of shape [B, L, T, H].
+    Utilizes einops for reshaping operations.
     """
-    def __init__(self,
-                 in_dim: int,
-                 out_dim: int,
-                 num_layers: int = 6,
-                 num_heads: int = 8,
-                 ff_hidden_dim: int = 2048,
-                 max_seq_len: int = 500,
-                 dropout: float = 0.1):
+    def __init__(
+        self,
+        in_dim: int,
+        out_dim: int,
+        num_layers: int = 6,
+        num_heads: int = 8,
+        ff_hidden_dim: int = 2048,
+        max_seq_len: int = 500,
+        dropout: float = 0.1
+    ):
         super().__init__(in_dim, out_dim)
         self.embed_dim = in_dim
-        # 可学习位置编码
         self.pos_emb = nn.Embedding(max_seq_len, in_dim)
-        # 解码器层堆叠
-        layers = []
-        for _ in range(num_layers):
-            layers.append(FlashTransformerDecoderLayer(
+        self.layers = nn.ModuleList([
+            FlashTransformerDecoderLayer(
                 embed_dim=in_dim,
                 num_heads=num_heads,
                 ff_hidden_dim=ff_hidden_dim,
-                dropout=dropout))
-        self.layers = nn.ModuleList(layers)
-        # 输出分类
+                dropout=dropout
+            ) for _ in range(num_layers)
+        ])
         self.fc_out = nn.Linear(in_dim, out_dim)
 
-    def forward(self,
-                tgt: torch.Tensor,
-                memory: torch.Tensor,
-                tgt_mask: torch.Tensor = None,
-                memory_mask: torch.Tensor = None):
-        B, T_tgt, _ = tgt.size()
-        # 添加位置编码
-        pos_ids = torch.arange(T_tgt, device=tgt.device).unsqueeze(0).expand(B, T_tgt)
-        x = tgt + self.pos_emb(pos_ids)
-        # 逐层处理
+    def forward(
+        self,
+        tgt: torch.Tensor,     # [B, L, T, H]
+        memory: torch.Tensor,  # [B, Lm, Tm, H]
+        tgt_mask: torch.Tensor = None,
+        memory_mask: torch.Tensor = None
+    ):
+        assert tgt.dim() == 4, f"Expected 4D tensor [B, L, T, H], got {tgt.dim()}D tensor"
+        assert memory.dim() == 4, f"Expected 4D tensor [B, Lm, Tm, H], got {memory.dim()}D tensor"
+        B, L, T, H = tgt.shape
+        # Flatten target and memory sequences
+        seq_len = L * T
+        tgt_flat = rearrange(tgt, 'b l t h -> b (l t) h')
+        pos_ids = torch.arange(seq_len, device=tgt.device).unsqueeze(0).expand(B, seq_len)
+        x = tgt_flat + self.pos_emb(pos_ids)
+        Lm, Tm = memory.shape[1], memory.shape[2]
+        memory_flat = rearrange(memory, 'b lm tm h -> b (lm tm) h')
         for layer in self.layers:
-            x = layer(x, memory, tgt_mask=tgt_mask, memory_mask=memory_mask)
-        # 输出 logits
-        logits = self.fc_out(x)
-        return logits
+            x = layer(x, memory_flat, tgt_mask=tgt_mask, memory_mask=memory_mask)
+        logits_flat = self.fc_out(x)
+        # Reshape back to [B, L, T, out_dim]
+        return rearrange(logits_flat, 'b (l t) d -> b l t d', l=L, t=T)
