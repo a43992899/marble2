@@ -1,6 +1,8 @@
 # marble/tasks/GTZANGenre/probe.py
 import torch
 import torch.nn as nn
+import lightning.pytorch as pl
+
 from marble.core.base_task import BaseTask
 from marble.core.utils import instantiate_from_config
 
@@ -46,36 +48,40 @@ class ProbeAudioTask(BaseTask):
             use_ema=use_ema,
         )
 
+    def on_test_start(self) -> None:
+        # Initialize storage for per-slice test outputs
+        self._test_file_outputs: list[dict] = []
+
     def test_step(self, batch, batch_idx):
         waveforms, labels, file_paths = batch
         logits = self(waveforms)
         probs = torch.softmax(logits, dim=1).cpu()
         preds = torch.argmax(probs, dim=1)
-        return {
-            "file_paths": file_paths,
-            "probs": probs,
-            "preds": preds,
-            "labels": labels.cpu(),
-        }
 
-    def test_epoch_end(self, outputs):
-        # aggregate per‐slice → per‐file
-        file_dict = {}
-        for out in outputs:
-            for fp, prob, lb in zip(out["file_paths"], out["probs"], out["labels"]):
-                info = file_dict.setdefault(fp, {"probs": [], "label": int(lb)})
-                info["probs"].append(prob.numpy())
+        # Store per-slice probabilities and labels for file-level aggregation
+        for fp, prob, lb in zip(file_paths, probs, labels.cpu()):
+            self._test_file_outputs.append({
+                "file_path": fp,
+                "prob": prob.numpy(),
+                "label": int(lb),
+            })
+
+    def on_test_epoch_end(self) -> None:
+        # Aggregate per-file predictions
+        file_dict: dict[str, dict] = {}
+        for entry in self._test_file_outputs:
+            fp = entry["file_path"]
+            info = file_dict.setdefault(fp, {"probs": [], "label": entry["label"]})
+            info["probs"].append(entry["prob"])
 
         total, correct = 0, 0
-        file_preds = {}
         for fp, info in file_dict.items():
             arr = torch.tensor(info["probs"])      # (n_slices, C)
-            mean_prob = arr.mean(dim=0)           # (C,)
+            mean_prob = arr.mean(dim=0)             # (C,)
             pred = int(mean_prob.argmax().item())
-            file_preds[fp] = pred
             total += 1
             correct += int(pred == info["label"])
 
-        file_acc = correct / total
-        self.log("test/file_acc", file_acc, prog_bar=True, on_epoch=True)
-        return {"file_level_preds": file_preds, "file_acc": file_acc}
+        file_acc = correct / total if total > 0 else 0.0
+        # Log file-level accuracy with sync across devices
+        self.log("test/file_acc", file_acc, prog_bar=True, on_epoch=True, sync_dist=True)

@@ -82,13 +82,13 @@ class BaseTask(LightningModule, ABC):
         # compute and log loss
         losses = [fn(logits, y) for fn in self.loss_fns]
         loss = sum(losses)
-        self.log(f"{split}/loss", loss, prog_bar=True, on_step=False, on_epoch=True)
+        self.log(f"{split}/loss", loss, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
 
         # compute and log metrics
         mc: MetricCollection = getattr(self, f"{split}_metrics", None)
         if mc is not None:
             metrics_out = mc(logits, y)
-            self.log_dict(metrics_out, prog_bar=(split == "val"), on_step=False, on_epoch=True)
+            self.log_dict(metrics_out, prog_bar=(split == "val"), on_step=False, on_epoch=True, sync_dist=True)
 
         return loss
 
