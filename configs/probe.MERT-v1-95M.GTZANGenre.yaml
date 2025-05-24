@@ -98,17 +98,28 @@ data:
     num_workers: 8
 
     audio_transforms:
-      - class_path: marble.encoders.MERT.model.MERT_v1_95M_FeatureExtractor
-        init_args:
-          pre_trained_folder: null
-          squeeze: true
+      train:
+        - class_path: marble.encoders.MERT.model.MERT_v1_95M_FeatureExtractor
+          init_args:
+            pre_trained_folder: null
+            squeeze: true
+      val:
+        - class_path: marble.encoders.MERT.model.MERT_v1_95M_FeatureExtractor
+          init_args:
+            pre_trained_folder: null
+            squeeze: true
+      test:
+        - class_path: marble.encoders.MERT.model.MERT_v1_95M_FeatureExtractor
+          init_args:
+            pre_trained_folder: null
+            squeeze: true
 
     train:
       class_path: marble.tasks.GTZANGenre.datamodule.GTZANGenreAudioTrain
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: 30
+        clip_seconds: 30.2
         min_clip_ratio: 0.8 # at least 80% of the clip length
         channel_mode: first # first, random, mix
         jsonl: data/GTZAN/GTZANGenre.train.jsonl
@@ -117,7 +128,7 @@ data:
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: 30
+        clip_seconds: 30.2
         min_clip_ratio: 0.8
         channel_mode: first
         jsonl: data/GTZAN/GTZANGenre.val.jsonl
@@ -126,7 +137,7 @@ data:
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: 30
+        clip_seconds: 30.2
         min_clip_ratio: 0.8
         channel_mode: first
         jsonl: data/GTZAN/GTZANGenre.test.jsonl

@@ -14,59 +14,69 @@ from marble.core.base_transform import BaseEmbTransform, BaseAudioTransform
 
 ############################## Audio Transforms ##############################
 class AudioTransformDataset(torch.utils.data.Dataset):
-    """在原始 waveform 上依次调用 BaseAudioTransform 实例化对象。"""
+    """Sequentially apply BaseAudioTransform instances on raw waveforms."""
     def __init__(self, base_dataset, transforms: list[BaseAudioTransform]):
         self.base = base_dataset
         self.transforms = transforms
-        # 假设所有子类里都有 sample_rate 属性
+        # assume base_dataset has sample_rate attribute
         self.sample_rate = getattr(base_dataset, "sample_rate", None)
 
     def __len__(self):
         return len(self.base)
 
     def __getitem__(self, idx):
-        # 原来 __getitem__ 返回 (waveform, label, path)
+        # base[idx] returns:
+        #   waveform: Tensor of shape [C, T] (or [1, T] for mono)
+        #   label: any (e.g. int)
+        #   path: str
         waveform, label, path = self.base[idx]
-        # 构造成 transform 接受的 dict
+
+        # ensure waveform is [C, T]
+        assert waveform.ndim == 2 and waveform.shape[0] > 0, \
+            f"Expected waveform shape [C, T], got {waveform.shape}"
+
         sample = {
-            "waveform": waveform.squeeze(0) if waveform.ndim == 2 and waveform.shape[0] == 1 else waveform,
-            "sampling_rate": self.sample_rate
+            "waveform": waveform,            # Tensor [C, T]
+            "sampling_rate": self.sample_rate  # int
         }
-        # 依次调用每个 transform
+
+        # apply each transform in sequence
         for t in self.transforms:
             sample = t(sample)
-        # 从返回的 dict 里取出新 waveform
-        new_wav = sample["waveform"]
+
+        # final waveform
+        new_wav = sample["waveform"]         # Tensor [C, T] or [T] (for mert)
         return new_wav, label, path
 
 
 class AudioLayerNorm(BaseAudioTransform):
     """
-    Normalize each channel of waveform to zero‐mean, unit‐variance over time.
+    Normalize each channel to zero‐mean, unit‐variance over time.
 
     Args:
-        eps (float): small constant to avoid division by zero.
-        affine (bool): if True, learn per‐channel scale & bias.
+        eps (float): to avoid div by zero.
+        affine (bool): if True, learn scale & bias per channel.
     """
     def __init__(self, eps: float = 1e-5, affine: bool = True):
         super().__init__()
         self.eps = eps
         self.affine = affine
         if affine:
-            # one scale & bias per channel
+            # gamma, beta: each [1, 1] (broadcast to [C, T])
             self.gamma = nn.Parameter(torch.ones(1, 1))
             self.beta  = nn.Parameter(torch.zeros(1, 1))
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        # waveform: [C, T]
+        # w: [C, T]
         w = sample["waveform"]
-        mean = w.mean(dim=-1, keepdim=True)               # [C,1]
-        std  = w.std(dim=-1, keepdim=True)                # [C,1]
-        w_norm = (w - mean) / (std + self.eps)            # [C, T]
+        mean = w.mean(dim=-1, keepdim=True)  # [C, 1]
+        std  = w.std(dim=-1, keepdim=True)   # [C, 1]
+        # normalized: [C, T]
+        w_norm = (w - mean) / (std + self.eps)
         if self.affine:
-            # broadcast gamma/beta over time
+            # broadcast gamma, beta to [C, T]
             w_norm = w_norm * self.gamma + self.beta
-        sample["waveform"] = w_norm
+        sample["waveform"] = w_norm          # [C, T]
         return sample
     
 
@@ -74,37 +84,43 @@ class RandomCrop(BaseAudioTransform):
     def __init__(self, crop_size: int):
         """
         Args:
-            crop_size (int): target length in samples.
+            crop_size (int): target length in samples (T_out).
         """
         super().__init__()
         self.crop_size = crop_size
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        waveform = sample["waveform"]  # [C, T]
+        # waveform: [C, T]
+        waveform = sample["waveform"]
         C, T = waveform.shape
         if T <= self.crop_size:
             pad = self.crop_size - T
+            # pad to [C, crop_size]
             waveform = F.pad(waveform, (0, pad))
         else:
             start = random.randint(0, T - self.crop_size)
+            # crop to [C, crop_size]
             waveform = waveform[:, start : start + self.crop_size]
-        sample["waveform"] = waveform
+        sample["waveform"] = waveform       # [C, crop_size]
         return sample
 
 
 class AddNoise(BaseAudioTransform):
-    def __init__(self, snr_db: float):
-        """
-        Args:
-            snr_db (float): desired signal‐to‐noise ratio in dB.
-        """
+    """
+    Adds random Gaussian noise to the waveform based on a random SNR."""
+    def __init__(self, snr_min: float = 5.0, snr_max: float = 20.0): 
         super().__init__()
-        self.snr = snr_db
+        self.snr_min = snr_min
+        self.snr_max = snr_max
 
-    def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+    def forward(self, sample):
+        # waveform: [C, T]
         waveform = sample["waveform"]
-        rms = waveform.pow(2).mean().sqrt()
-        noise_std = rms / (10 ** (self.snr / 20))
+        # 随机采样一个 SNR
+        snr = torch.empty(1).uniform_(self.snr_min, self.snr_max).item() # scalar
+        rms = waveform.pow(2).mean().sqrt() # scalar
+        # noise: [C, T]
+        noise_std = rms / (10 ** (snr / 20))
         noise = torch.randn_like(waveform) * noise_std
         sample["waveform"] = waveform + noise
         return sample
@@ -114,14 +130,17 @@ class Resample(BaseAudioTransform):
     def __init__(self, orig_freq: int, new_freq: int):
         """
         Args:
-            orig_freq (int): original sampling rate of the waveform.
-            new_freq  (int): desired sampling rate after resampling.
+            orig_freq (int): original sampling rate.
+            new_freq  (int): desired sampling rate.
         """
         super().__init__()
         self.resampler = torchaudio.transforms.Resample(orig_freq, new_freq)
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        sample["waveform"] = self.resampler(sample["waveform"])
+        # input waveform: [C, T]
+        out = self.resampler(sample["waveform"])
+        # output waveform: [C, T_new]
+        sample["waveform"] = out
         return sample
 
 
@@ -136,9 +155,9 @@ class Spectrogram(BaseAudioTransform):
         """
         Args:
             n_fft (int): FFT window size.
-            win_length (int): window length (defaults to n_fft).
-            hop_length (int): hop length between frames (defaults to win_length//2).
-            power (float): exponent for the magnitude spectrogram.
+            win_length (int): window length.
+            hop_length (int): hop length between frames.
+            power (float): exponent for magnitude.
         """
         super().__init__()
         self.spec = torchaudio.transforms.Spectrogram(
@@ -149,8 +168,10 @@ class Spectrogram(BaseAudioTransform):
         )
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        # returns shape [C, F, T']
-        sample["spectrogram"] = self.spec(sample["waveform"])
+        # input waveform: [C, T]
+        S = self.spec(sample["waveform"])
+        # spectrogram: [C, F, T']
+        sample["spectrogram"] = S
         return sample
 
 
@@ -165,11 +186,11 @@ class MelSpectrogram(BaseAudioTransform):
     ):
         """
         Args:
-            sample_rate (int): sampling rate of the waveform.
+            sample_rate (int): sampling rate.
             n_fft (int): FFT window size.
             n_mels (int): number of Mel bins.
-            win_length (int): window length (defaults to n_fft).
-            hop_length (int): hop length (defaults to win_length//2).
+            win_length (int): window length.
+            hop_length (int): hop between frames.
         """
         super().__init__()
         self.melspec = torchaudio.transforms.MelSpectrogram(
@@ -181,8 +202,10 @@ class MelSpectrogram(BaseAudioTransform):
         )
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        # returns shape [C, n_mels, T']
-        sample["mel_spectrogram"] = self.melspec(sample["waveform"])
+        # input waveform: [C, T]
+        M = self.melspec(sample["waveform"])
+        # mel spectrogram: [C, n_mels, T']
+        sample["mel_spectrogram"] = M
         return sample
 
 

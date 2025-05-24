@@ -1,7 +1,7 @@
 # marble/tasks/GTZANGenre/datamodule.py
 
 import json
-import math
+import random
 from typing import List, Tuple
 
 import torch
@@ -31,8 +31,8 @@ EXAMPLE_JSONL = {
 
 class _GTZANGenreAudioBase(Dataset):
     """
-    基类：将每个文件切成若干不重叠的 clip_seconds 片段，
-    ceil保证最后一段也能取到（会被补零）；并做重采样 & 通道对齐。
+    Base dataset for GTZAN genre audio:
+    - Splits each audio file into non-overlapping clips of length `clip_seconds` (last clip zero-padded).
     """
     def __init__(
         self,
@@ -56,12 +56,12 @@ class _GTZANGenreAudioBase(Dataset):
         with open(jsonl, 'r') as f:
             self.meta = [json.loads(line) for line in f]
 
-        # 构造 (file_idx, slice_idx, orig_sr, orig_clip_frames, orig_channels) 的映射
+        # Build index map: (file_idx, slice_idx, orig_sr, orig_clip_frames, orig_channels)
         self.index_map: List[Tuple[int, int, int, int, int]] = []
         self.resamplers = {}
         for file_idx, info in enumerate(self.meta):
             orig_sr = info['sample_rate']
-            # 复用同采样率的 resampler
+            # Prepare resampler if needed
             if orig_sr != self.sample_rate and orig_sr not in self.resamplers:
                 self.resamplers[orig_sr] = torchaudio.transforms.Resample(orig_sr, self.sample_rate)
 
@@ -69,10 +69,10 @@ class _GTZANGenreAudioBase(Dataset):
             orig_channels = info['channels']
             total_samples = info['num_samples']
 
-            # 计算整片数量和残片
+            # Number of full clips and remainder
             n_full = total_samples // orig_clip_frames
             rem = total_samples - n_full * orig_clip_frames
-            # 根据 min_clip_ratio 决定是否保留最后残片
+            # Decide whether to keep the last shorter clip
             if rem / orig_clip_frames >= self.min_clip_ratio:
                 n_slices = n_full + 1
             else:
@@ -88,12 +88,24 @@ class _GTZANGenreAudioBase(Dataset):
         return len(self.index_map)
 
     def __getitem__(self, idx: int):
+        """
+        Load and return one audio clip and its label.
+
+        Inputs:
+            idx: int - index of the clip
+
+        Returns:
+            waveform: torch.Tensor, shape (self.channels, self.clip_len_target)
+            label: int
+            path: str
+        """
+        # Unpack mapping info
         file_idx, slice_idx, orig_sr, orig_clip, orig_channels = self.index_map[idx]
         info = self.meta[file_idx]
         path = info['audio_path']
         label = LABEL2IDX[info['label']]
 
-        # 计算偏移并加载
+        # Compute frame offset and load clip
         offset = slice_idx * orig_clip
         waveform, _ = torchaudio.load(
             path,
@@ -101,7 +113,7 @@ class _GTZANGenreAudioBase(Dataset):
             num_frames=orig_clip
         )  # (orig_channels, orig_clip)
 
-        # 通道对齐 & 单声道处理
+        # Channel alignment / downmixing
         if orig_channels >= self.channels:
             if self.channels == 1:
                 if self.channel_mode == "first":
@@ -120,18 +132,20 @@ class _GTZANGenreAudioBase(Dataset):
             else:
                 waveform = waveform[:self.channels]
         else:
+            # Repeat last channel to pad to desired channels
             last = waveform[-1:].repeat(self.channels - orig_channels, 1)
             waveform = torch.cat([waveform, last], dim=0)
 
-        # 重采样
+        # Resample if needed
         if orig_sr != self.sample_rate:
             waveform = self.resamplers[orig_sr](waveform)
 
-        # 补齐到目标长度
+        # Pad to target length if short
         if waveform.size(1) < self.clip_len_target:
             pad = self.clip_len_target - waveform.size(1)
             waveform = F.pad(waveform, (0, pad))
-
+        
+        # Final shape: (self.channels, self.clip_len_target)
         return waveform, label, path
 
 
@@ -157,9 +171,6 @@ class GTZANGenreAudioTest(GTZANGenreAudioVal):
 
 
 class GTZANGenreDataModule(pl.LightningDataModule):
-    """
-    LightningDataModule：根据 stage 自动装配 train/val/test Dataset 并返回对应 DataLoader。
-    """
     def __init__(
         self,
         batch_size: int,
@@ -167,43 +178,46 @@ class GTZANGenreDataModule(pl.LightningDataModule):
         train: dict,
         val: dict,
         test: dict,
-        audio_transforms: list | None = None,
+        audio_transforms: dict | None = None,  # 改成 dict
     ):
         super().__init__()
         self.batch_size = batch_size
         self.num_workers = num_workers
-        
-        if audio_transforms is not None:
-            self.audio_transforms = [
-                instantiate_from_config(cfg) for cfg in audio_transforms
-            ]
-        else:
-            self.audio_transforms = []
-        
+
+        # audio_transforms 是 dict，包含 train/val/test keys
+        self.audio_transforms = audio_transforms or {"train": [], "val": [], "test": []}
+
         self.train_config = train
-        self.val_config = val
-        self.test_config = test
+        self.val_config   = val
+        self.test_config  = test
+
+    def _wrap(self, dataset: Dataset, stage: str) -> Dataset:
+        """根据 stage 选对应的 transforms 列表来 wrap Dataset"""
+        transforms = [
+            instantiate_from_config(cfg) 
+            for cfg in self.audio_transforms.get(stage, [])
+        ]
+        if transforms:
+            return AudioTransformDataset(dataset, transforms)
+        return dataset
 
     def setup(self, stage: str | None = None):
         if stage in (None, "fit"):
+            # 原始 train/val dataset
             train_ds = instantiate_from_config(self.train_config)
             val_ds   = instantiate_from_config(self.val_config)
-            if self.audio_transforms:
-                train_ds = AudioTransformDataset(train_ds, self.audio_transforms)
-                val_ds   = AudioTransformDataset(val_ds,   self.audio_transforms)
-            self.train_dataset = train_ds
-            self.val_dataset   = val_ds
+            # 分别 wrap
+            self.train_dataset = self._wrap(train_ds, "train")
+            self.val_dataset   = self._wrap(val_ds,   "val")
         if stage in (None, "test"):
             test_ds = instantiate_from_config(self.test_config)
-            if self.audio_transforms:
-                test_ds = AudioTransformDataset(test_ds, self.audio_transforms)
-            self.test_dataset = test_ds
+            self.test_dataset = self._wrap(test_ds, "test")
 
     def train_dataloader(self):
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
-            shuffle=True,            # 打乱训练片段
+            shuffle=True,
             num_workers=self.num_workers,
             pin_memory=True,
         )
@@ -212,7 +226,7 @@ class GTZANGenreDataModule(pl.LightningDataModule):
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
-            shuffle=False,           # 按序评估
+            shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
         )
@@ -221,7 +235,7 @@ class GTZANGenreDataModule(pl.LightningDataModule):
         return DataLoader(
             self.test_dataset,
             batch_size=self.batch_size,
-            shuffle=False,           # 按序评估
+            shuffle=False,
             num_workers=self.num_workers,
             pin_memory=True,
         )
