@@ -89,88 +89,128 @@ Marble is a modular, configuration-driven benchmark suite for evaluating self-su
 
 
 
-## Adding a New Encoder
+## 🚀 Adding a New Encoder
 
-1. **Implement Encoder**:
+Marble supports two flexible extension modes for encoders:
 
-   * Create a subclass of `marble.core.base_encoder.BaseAudioEncoder`:
+### Mode 1: **Internal Extension**
+1. **Implement your encoder** under `marble/encoders/`:
+   ```python
+   # marble/encoders/my_encoder.py
+   from marble.core.base_encoder import BaseAudioEncoder
 
-     ```python
-     class MyEncoder(BaseAudioEncoder):
-         def __init__(self, ...):
-             super().__init__()
-             # load or define your model
-         def forward(self, waveforms):
-             # return hidden states: List[Tensor] of shape (batch, layer, seq_len, hidden_size)
-             # or return a dict of representations, then you should write your own feature selector
-     ```
-   * It would be better if you can place the file under `marble/encoders/my_encoder.py`, but it is OK to just put it in e.g. `./my_project/my_encoder.py` since we are config driven.
+   class MyEncoder(BaseAudioEncoder):
+      def __init__(self, arg1, arg2):
+         super().__init__()
+         # initialize your model
 
-2. **Register in Config**:
+      def forward(self, waveforms):
+         # return List[Tensor] of shape (batch, layer, seq_len, hidden_size)
+         # or return a dict of representations
+   ```
+2. **Reference it in your YAML**:
 
-   * In your YAML experiment:
+   ```yaml
+   model:
+     encoder:
+       class_path: marble.encoders.my_encoder.MyEncoder
+       init_args:
+         arg1: 123
+         arg2: 456
+   ```
 
-     ```yaml
-     model:
-       encoder:
-         class_path: marble.encoders.my_encoder.MyEncoder
-         init_args:
-           my_arg: value
-     ```
+### Mode 2: **External Extension**
 
-3. **Feature Extraction Config (Optional)**:
+1. Place `my_encoder.py` anywhere in your project (e.g. `./my_project/my_encoder.py`).
+2. Use the full import path in your YAML:
 
-   * Consider reusing embedding transforms in `marble/modules/transforms.py`. If your encoder requires custom preprocessing, you can implement it as a subclass of `marble.core.base_transform.BaseEmbTransform`, and put it into `marble/modules/transforms.py`or `./my_project/my_transforms.py`.
-   * For audio transforms, similarly, you can implement it as a subclass of `marble.core.base_transform.BaseAudioTransform`, and put it into `marble/modules/transforms.py`or `./my_project/my_transforms.py`.
-   * In your YAML experiment:
-      ```yaml
-      ...
-      emb_transforms:
-         - class_path: marble.modules.transforms.MyEmbTransform
-            init_args:
-               param1: value1
-      ...
-      audio_transforms:
-      train:
-        - class_path: marble.modules.transforms.MyAudioTransform
-          init_args:
-            param1: value1
-      ```
+   ```yaml
+   model:
+     encoder:
+       class_path: my_project.my_encoder.MyEncoder
+       init_args:
+         arg1: 123
+   ```
+
+> **Optional:**
+>
+> * If your encoder needs embedding-level transforms, implement a `BaseEmbTransform` subclass and register under `emb_transforms`.
+> * If you need custom audio preprocessing, subclass `BaseAudioTransform` and register under `audio_transforms`.
+
+  ```yaml
+  emb_transforms:
+    - class_path: marble.modules.transforms.MyEmbTransform
+      init_args:
+        param: value
+
+  audio_transforms:
+    train:
+      - class_path: marble.modules.transforms.MyAudioTransform
+        init_args:
+          param: value
+  ```
 
 
-## Adding a New Task
+## 🚀 Adding a New Task
 
-1. **Define DataModule**:
+Marble supports two extension modes for tasks as well:
 
-   * Subclass `pl.LightningDataModule` and implement `setup`, `train_dataloader`, `val_dataloader`, `test_dataloader`. Use `instantiate_from_config` for consistency. Most importantly, implemnt the dataset.
-   * Place under `marble/tasks/YourTaskName/datamodule.py` or `./my_project/datamodule.py`.
-   * You may refer to `marble/tasks/GTZANGenre/datamodule.py` for an example. 
+### Mode 1: **Internal Extension**
 
-2. **Implement Task Logic**:
+1. **Create a new task package** under `marble/tasks/YourTask/`:
 
-   * Subclass `marble.core.base_task.BaseTask`:
+   ```
+   marble/tasks/YourTask/
+   ├── __init__.py
+   ├── datamodule.py    # Your LightningDataModule subclass
+   └── probe.py          # Your BaseTask subclass, e.g. probe, finetune, fewshot
+   ```
 
-     ```python
-     class YourTask(BaseTask):
-         def __init__(self, encoder, emb_transforms, decoders, losses, metrics, sample_rate, use_ema):
-             super().__init__(...)
-             # any custom behavior
-     ```
-   * Override `training_step`, `validation_step`, or hooks if needed.
-   * Place under `marble/tasks/YourTaskName/probe.py` or `./my_project/probe.py`. Or you can called it other names.
-   * You may customize your decoders, losses, and metrics.
+2. **Implement your classes**:
 
-3. **Create Task Package**:
+   ```python
+   # datamodule.py
+   import pytorch_lightning as pl
 
-   * Organize under `marble/tasks/YourTaskName/`:
+   class YourDataModule(pl.LightningDataModule):
+       def setup(self, stage=None):
+           ...
+       def train_dataloader(self):
+           ...
+       # val_dataloader, test_dataloader, etc.
 
-     * `__init__.py`
-     * `datamodule.py`
-     * `task.py` (your BaseTask subclass)
-     * `probe.py` / `finetune.py` / `fewshot.py` for different evaluation protocols
+   # probe.py
+   from marble.core.base_task import BaseTask
 
-4. **Configure in YAML**:
+   class YourTask(BaseTask):
+       def __init__(self, encoder, emb_transforms, decoders, losses, metrics, sample_rate, use_ema):
+           super().__init__(...)
+           # custom behavior here
+   ```
 
-   * Add under `model.class_path`: `marble.tasks.YourTaskName.probe.YourTask`
-   * Define `data` section pointing to your `DataModule`.
+3. **Point your YAML** to these classes:
+
+   ```yaml
+   task:
+     class_path: marble.tasks.YourTask.probe.YourTask
+     init_args:
+       sample_rate: 22050
+       use_ema: false
+
+   data:
+     class_path: marble.tasks.YourTask.datamodule.YourDataModule
+   ```
+
+### Mode 2: **External Task**
+
+1. Place your task code anywhere in your project (e.g. `./my_project/probe.py`, `./my_project/datamodule.py`).
+2. Reference via full import path:
+
+   ```yaml
+   model:
+     class_path: my_project.probe.CustomTask
+
+   data:
+     class_path: my_project.datamodule.CustomDataModule
+   ```
 
