@@ -214,3 +214,14 @@ Marble supports two extension modes for tasks as well:
      class_path: my_project.datamodule.CustomDataModule
    ```
 
+
+# Paper
+Link to MARBLE-v1: https://github.com/a43992899/MARBLE-Benchmark. Will be merged to v1 soon.
+```text
+@article{yuan2023marble,
+  title={MARBLE: Music Audio Representation Benchmark for Universal Evaluation},
+  author={Yuan, Ruibin and Ma, Yinghao and Li, Yizhi and Zhang, Ge and Chen, Xingran and Yin, Hanzhi and Zhuo, Le and Liu, Yiqi and Huang, Jiawen and Tian, Zeyue and others},
+  journal={arXiv preprint arXiv:2306.10548},
+  year={2023}
+}
+```
