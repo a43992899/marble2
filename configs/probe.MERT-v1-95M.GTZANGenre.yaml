@@ -120,7 +120,7 @@ data:
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: 30.3
+        clip_seconds: 30.2
         min_clip_ratio: 0.8 # at least 80% of the clip length
         channel_mode: first # first, random, mix
         jsonl: data/GTZAN/GTZANGenre.train.jsonl
@@ -129,7 +129,7 @@ data:
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: 30.3
+        clip_seconds: 30.2
         min_clip_ratio: 0.8
         channel_mode: first
         jsonl: data/GTZAN/GTZANGenre.val.jsonl
@@ -138,7 +138,7 @@ data:
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: 30.3
+        clip_seconds: 30.2
         min_clip_ratio: 0.8
         channel_mode: first
         jsonl: data/GTZAN/GTZANGenre.test.jsonl
@@ -152,6 +152,6 @@ lr_scheduler:
   class_path: lightning.pytorch.cli.ReduceLROnPlateau
   init_args:
     mode: "max"
-    factor: 0.1
+    factor: 0.5
     patience: 6
     monitor: "val/acc"
