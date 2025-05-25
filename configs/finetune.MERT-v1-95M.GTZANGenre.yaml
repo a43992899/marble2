@@ -49,8 +49,8 @@ model:
         pre_trained_folder: null
         train_mode: lora  # also supports lora, or full
         lora_r: 8
-        lora_alpha: 32
-        lora_dropout: 0.1
+        lora_alpha: 8
+        lora_dropout: 0.0
         lora_target_modules: ["q_proj", "v_proj"]
         force_half: false
         preprocess_in_forward: false
@@ -58,14 +58,18 @@ model:
     emb_transforms:
       - class_path: marble.modules.transforms.LayerSelector
         init_args:
-          layers: [12]  # something like [1, 3, "10..72"]
+          layers: [7]  # something like [1, 3, "10..72"]
       - class_path: marble.modules.transforms.TimeAvgPool # (batch_size, num_layers, 1, hidden_size)
     
     decoders:
-      - class_path: marble.modules.decoders.LinearDecoder
+      - class_path: marble.modules.decoders.MLPDecoder
         init_args:
           in_dim: 768
           out_dim: 10 # 10 genres
+          hidden_layers: [512]
+          activation_fn: 
+            class_path: torch.nn.ReLU
+          dropout: 0.2
 
     losses:
       - class_path: torch.nn.CrossEntropyLoss
@@ -146,7 +150,7 @@ data:
 optimizer:
   class_path: torch.optim.AdamW
   init_args:
-    lr: 5e-4
+    lr: 5e-3
 
 lr_scheduler:
   class_path: lightning.pytorch.cli.ReduceLROnPlateau
