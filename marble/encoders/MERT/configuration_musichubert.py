@@ -266,6 +266,9 @@ class MusicHubertConfig(PretrainedConfig):
         self.deepnorm = deepnorm
 
         self.attention_relax = attention_relax
+        
+        # fix bug with hf > 4.42 (https://huggingface.co/m-a-p/MERT-v1-95M/discussions/4)
+        self.conv_pos_batch_norm = False
 
     @property
     def inputs_to_logits_ratio(self):

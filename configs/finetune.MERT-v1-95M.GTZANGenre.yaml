@@ -4,11 +4,11 @@ ckpt_path: null # to resume
 trainer:
   fast_dev_run: false
   accelerator: gpu
-  strategy: ddp # or ddp_find_unused_parameters
+  strategy: ddp_find_unused_parameters_true 
   devices: [0]
   accumulate_grad_batches: 8
   num_nodes: 1
-  precision: 16 # or 32, or 16
+  precision: 16
   max_epochs: 100
   check_val_every_n_epoch: 1
   num_sanity_val_steps: 10
@@ -17,7 +17,7 @@ trainer:
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        dirpath: "./output/probe.GTZANGenre.MERT-v1-95M/checkpoints/" # Please specify your own path
+        dirpath: "./output/finetune.GTZANGenre.MERT-v1-95M/checkpoints/" # Please specify your own path
         filename: "best"
         save_top_k: 1 # -1 to save all checkpoints
     - class_path: marble.modules.callbacks.LoadLatestCheckpointCallback # for testing
@@ -33,12 +33,12 @@ trainer:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: "marble"
-      name: "probe.GTZANGenre.MERT-v1-95M"
-      save_dir: "./output/probe.GTZANGenre.MERT-v1-95M/"
+      name: "finetune.GTZANGenre.MERT-v1-95M"
+      save_dir: "./output/finetune.GTZANGenre.MERT-v1-95M/"
 
 
 model:
-  class_path: marble.tasks.GTZANGenre.probe.ProbeAudioTask
+  class_path: marble.tasks.GTZANGenre.finetune.FinetuneAudioTask
   init_args:
     sample_rate: 24000
     use_ema: false
@@ -47,25 +47,25 @@ model:
       class_path: marble.encoders.MERT.model.MERT_v1_95M_Encoder
       init_args:
         pre_trained_folder: null
-        train_mode: freeze  # also supports lora, or full
+        train_mode: lora  # also supports lora, or full
+        lora_r: 8
+        lora_alpha: 32
+        lora_dropout: 0.1
+        lora_target_modules: ["q_proj", "v_proj"]
         force_half: false
         preprocess_in_forward: false
       
     emb_transforms:
       - class_path: marble.modules.transforms.LayerSelector
         init_args:
-          layers: [7]  # something like [1, 3, "10..72"]
+          layers: [12]  # something like [1, 3, "10..72"]
       - class_path: marble.modules.transforms.TimeAvgPool # (batch_size, num_layers, 1, hidden_size)
     
     decoders:
-      - class_path: marble.modules.decoders.MLPDecoder
+      - class_path: marble.modules.decoders.LinearDecoder
         init_args:
           in_dim: 768
           out_dim: 10 # 10 genres
-          hidden_layers: [512]
-          activation_fn: 
-            class_path: torch.nn.ReLU
-          dropout: 0.2
 
     losses:
       - class_path: torch.nn.CrossEntropyLoss
@@ -120,7 +120,7 @@ data:
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: 30.3
+        clip_seconds: 30.2
         min_clip_ratio: 0.8 # at least 80% of the clip length
         channel_mode: first # first, random, mix
         jsonl: data/GTZAN/GTZANGenre.train.jsonl
@@ -129,7 +129,7 @@ data:
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: 30.3
+        clip_seconds: 30.2
         min_clip_ratio: 0.8
         channel_mode: first
         jsonl: data/GTZAN/GTZANGenre.val.jsonl
@@ -138,20 +138,20 @@ data:
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: 30.3
+        clip_seconds: 30.2
         min_clip_ratio: 0.8
         channel_mode: first
         jsonl: data/GTZAN/GTZANGenre.test.jsonl
 
 optimizer:
-  class_path: torch.optim.Adam
+  class_path: torch.optim.AdamW
   init_args:
-    lr: 5e-3
+    lr: 5e-4
 
 lr_scheduler:
   class_path: lightning.pytorch.cli.ReduceLROnPlateau
   init_args:
     mode: "max"
-    factor: 0.1
+    factor: 0.5
     patience: 6
     monitor: "val/acc"

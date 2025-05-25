@@ -1,3 +1,4 @@
+# marble/encoders/MERT/model.py
 from typing import Sequence, Dict, Optional, Union, Tuple, List
 
 import torch
@@ -31,6 +32,7 @@ class MERT_v1_95M_Encoder(BaseEncoder):
         lora_r: int = 8,
         lora_alpha: int = 16,
         lora_dropout: float = 0.1,
+        lora_target_modules: Sequence[str] = ["q_proj", "v_proj"],
     ) -> None:
         """
         Initialize the MERT HuBERT encoder.
@@ -77,11 +79,11 @@ class MERT_v1_95M_Encoder(BaseEncoder):
                 param.requires_grad = False
 
             peft_config = LoraConfig(
-                task_type=TaskType.FEATURE_EXTRACTION,
                 inference_mode=False,
                 r=lora_r,
                 lora_alpha=lora_alpha,
                 lora_dropout=lora_dropout,
+                target_modules=lora_target_modules,
             )
             self.model = get_peft_model(self.model, peft_config)
 
@@ -145,12 +147,11 @@ class MERT_v1_95M_Encoder(BaseEncoder):
         # Ensure input dtype matches model parameters (fp16 vs fp32)
         model_dtype = next(self.model.parameters()).dtype
         input_values = input_values.to(device=self.model.device, dtype=model_dtype)
-
+        
         outputs = self.model(
-            input_values,
+            input_values=input_values,
             output_hidden_states=output_hidden_states,
             output_attentions=output_attentions,
-            **kwargs
         )
 
         return outputs
@@ -218,7 +219,7 @@ if __name__ == "__main__":
     model = MERT_v1_330M_Encoder(preprocess_in_forward=True)
     x = torch.randn(24000 * 5)  # 1个5秒的音频
     out = model(x)
-    print(out.last_hidden_state.shape)  # 应该是 (2, 24000 * 5 / 75, 1024)
+    print(out.last_hidden_state.shape)  # 应该是 (1, 24000 * 5 / 75, 1024)
     
     # 测试特征提取器
     feature_extractor = MERT_v1_330M_FeatureExtractor()
