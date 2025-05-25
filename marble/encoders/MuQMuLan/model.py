@@ -12,7 +12,7 @@ class MuQMuLan_Encoder(BaseEncoder):
     A Hugging Face HuBERT-based wrapper with optional LoRA adapters, full fine-tuning, or freezing.
     """
 
-    NAME = "MuQ-MuLan-large"
+    NAME = "MuQMuLan"
     HUGGINGFACE_MODEL_NAME = "OpenMuQ/MuQ-MuLan-large"
     TOKEN_RATE = 1  # Number of feature frames per second of audio
     SAMPLING_RATE = 24000  # Audio sampling rate expected by the model

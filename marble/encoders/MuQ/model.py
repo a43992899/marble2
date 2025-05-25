@@ -12,7 +12,7 @@ class MuQ_Encoder(BaseEncoder):
     A Hugging Face HuBERT-based wrapper with optional LoRA adapters, full fine-tuning, or freezing.
     """
 
-    NAME = "MuQ-large-msd-iter"
+    NAME = "MuQ"
     HUGGINGFACE_MODEL_NAME = "OpenMuQ/MuQ-large-msd-iter"
     TOKEN_RATE = 25  # Number of feature frames per second of audio
     SAMPLING_RATE = 24000  # Audio sampling rate expected by the model
@@ -105,8 +105,6 @@ class MuQ_Encoder(BaseEncoder):
                   shape (batch_size, seq_len, NUM_FEATURES).
                 - hidden_states (tuple of torch.FloatTensor, optional): All layer outputs
                   if output_hidden_states=True; each is (batch_size, seq_len, NUM_FEATURES).
-                - attentions (tuple of torch.FloatTensor, optional): Attention maps
-                  if output_attentions=True; each is (batch_size, num_heads, seq_len, seq_len).
         """
         # Ensure input dtype matches model parameters (fp16 vs fp32)
         model_dtype = next(self.model.parameters()).dtype
@@ -117,14 +115,14 @@ class MuQ_Encoder(BaseEncoder):
             output_hidden_states=output_hidden_states
         )
 
-        return outputs
+        return outputs.hidden_states
 
 
 
 if __name__ == "__main__":
     device = 'cuda'
     # fake wav for testing
-    wav = torch.randn(1, 24000 * 10)  # 10 seconds of audio at 24kHz
+    wav = torch.randn(4, 24000 * 10)  # 10 seconds of audio at 24kHz
     wavs = torch.tensor(wav).to(device) 
 
     # This will automatically fetch the checkpoint from huggingface

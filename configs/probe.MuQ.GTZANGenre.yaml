@@ -4,12 +4,12 @@ ckpt_path: null # to resume
 trainer:
   fast_dev_run: false
   accelerator: gpu
-  # strategy: ddp # or ddp_find_unused_parameters
+  strategy: ddp # or ddp_find_unused_parameters
   devices: [0]
   accumulate_grad_batches: 8
   num_nodes: 1
   precision: bf16 # or 32, or 16
-  max_epochs: 100
+  max_epochs: 50
   check_val_every_n_epoch: 1
   num_sanity_val_steps: 10
   log_every_n_steps: 5
@@ -17,7 +17,7 @@ trainer:
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        dirpath: "./output/probe.GTZANGenre.MERT-v1-95M/checkpoints/" # Please specify your own path
+        dirpath: "./output/probe.GTZANGenre.MuQ/checkpoints/" # Please specify your own path
         filename: "best"
         save_top_k: 1 # -1 to save all checkpoints
     - class_path: marble.modules.callbacks.LoadLatestCheckpointCallback # for testing
@@ -33,8 +33,8 @@ trainer:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: "marble"
-      name: "probe.GTZANGenre.MERT-v1-95M"
-      save_dir: "./output/probe.GTZANGenre.MERT-v1-95M/"
+      name: "probe.GTZANGenre.MuQ"
+      save_dir: "./output/probe.GTZANGenre.MuQ/"
 
 
 model:
@@ -44,23 +44,21 @@ model:
     use_ema: false
 
     encoder:
-      class_path: marble.encoders.MERT.model.MERT_v1_95M_Encoder
+      class_path: marble.encoders.MuQ.model.MuQ_Encoder
       init_args:
         pre_trained_folder: null
         train_mode: freeze  # also supports lora, or full
-        force_half: false
-        preprocess_in_forward: false
       
     emb_transforms:
       - class_path: marble.modules.transforms.LayerSelector
         init_args:
-          layers: [7]  # something like [1, 3, "10..72"]
+          layers: [6]  # something like [1, 3, "10..72"]
       - class_path: marble.modules.transforms.TimeAvgPool # (batch_size, num_layers, 1, hidden_size)
     
     decoders:
       - class_path: marble.modules.decoders.MLPDecoder
         init_args:
-          in_dim: 768
+          in_dim: 1024
           out_dim: 10 # 10 genres
           hidden_layers: [512]
           activation_fn: 
@@ -97,23 +95,6 @@ data:
   init_args:
     batch_size: 8
     num_workers: 8
-
-    audio_transforms:
-      train:
-        - class_path: marble.encoders.MERT.model.MERT_v1_95M_FeatureExtractor
-          init_args:
-            pre_trained_folder: null
-            squeeze: true
-      val:
-        - class_path: marble.encoders.MERT.model.MERT_v1_95M_FeatureExtractor
-          init_args:
-            pre_trained_folder: null
-            squeeze: true
-      test:
-        - class_path: marble.encoders.MERT.model.MERT_v1_95M_FeatureExtractor
-          init_args:
-            pre_trained_folder: null
-            squeeze: true
 
     train:
       class_path: marble.tasks.GTZANGenre.datamodule.GTZANGenreAudioTrain

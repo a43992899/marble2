@@ -243,7 +243,10 @@ class LayerSelector(BaseEmbTransform):
 
     def forward(self, hidden_states: Sequence[torch.Tensor], **kwargs) -> torch.Tensor:
         selected = [hidden_states[i] for i in self.layers]
-        return torch.stack(selected, dim=1)
+        stacked = torch.stack(selected, dim=1)
+        assert stacked.ndim == 4, \
+            f"Expected 4D tensor after stacking, got {stacked.ndim}D"
+        return stacked
 
 
 class LayerWeightedSum(BaseEmbTransform):

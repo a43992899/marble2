@@ -199,6 +199,7 @@ class GTZANGenreDataModule(pl.LightningDataModule):
         ]
         if transforms:
             return AudioTransformDataset(dataset, transforms)
+        print(f"No transforms for stage '{stage}', using original dataset.")
         return dataset
 
     def setup(self, stage: str | None = None):
