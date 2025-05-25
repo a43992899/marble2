@@ -19,7 +19,7 @@ from transformers.models.hubert.modeling_hubert import (
 )
 
     
-from marble.encoders.MERT.configuration_musichubert import MusicHubertConfig
+from .configuration_musichubert import MusicHubertConfig
 
 class MusicHubertFeatureProjection(nn.Module):
     def __init__(self, config):
