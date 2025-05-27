@@ -13,8 +13,12 @@ class Qwen2AudioInstructEncoder(BaseEncoder):
     """
     A wrapper around the Qwen2-Audio-7B-Instruct encoder with optional freezing or full fine-tuning.
     """
-    NAME = "Qwen2-Audio-7B-Instruct"
+    NAME = "Qwen2AudioInstructEncoder"
     HUGGINGFACE_MODEL_NAME = "Qwen/Qwen2-Audio-7B-Instruct"
+    N_TRANSFORMER_LAYERS = 32
+    SAMPLING_RATE = 16000
+    TOKEN_RATE = 25
+    NUM_FEATURES = 1280
 
     def __init__(
         self,
@@ -33,6 +37,7 @@ class Qwen2AudioInstructEncoder(BaseEncoder):
         self.sample_rate = self.feature_extractor.sampling_rate
 
         # Load encoder config and model
+        print(f"Loading Qwen2AudioForConditionalGeneration from {repo}")
         self.model = Qwen2AudioForConditionalGeneration.from_pretrained(
             repo,
         ).audio_tower
@@ -91,20 +96,25 @@ class Qwen2AudioInstructFeatureExtractor(BaseAudioTransform):
     """
     Audio-to-feature transform using Qwen2AudioProcessor.
     """
-    NAME = "Qwen2-Audio-7B-Instruct"
+    NAME = "Qwen2AudioInstructFeatureExtractor"
     HUGGINGFACE_MODEL_NAME = "Qwen/Qwen2-Audio-7B-Instruct"
+    N_TRANSFORMER_LAYERS = 32
+    SAMPLING_RATE = 16000
+    TOKEN_RATE = 25
+    NUM_FEATURES = 1280
 
     def __init__(
         self,
         pre_trained_folder: str = None,
+        squeeze: bool = True,  # 是否压缩为 1D
     ) -> None:
         super().__init__()
         repo = pre_trained_folder or self.HUGGINGFACE_MODEL_NAME
         self.processor = Qwen2AudioProcessor.from_pretrained(
             repo,
-            trust_remote_code=True,
         )
         self.feature_extractor = self.processor.feature_extractor
+        self.squeeze = squeeze
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """
@@ -115,25 +125,23 @@ class Qwen2AudioInstructFeatureExtractor(BaseAudioTransform):
             sample with keys:
               - "input_features": torch.FloatTensor (batch, n_mels, seq_len)
         """
-        x = sample["input_features"] # waveform
+        x = sample["input_features"].squeeze() # waveform
+        assert isinstance(x, torch.Tensor)
+        assert x.ndim == 1, "Input features must be a 1D tensor (batch_size=1)"
+        # while it also supports list of ndarray, we disable it for now
+        # this class should be used in the dataloader
         sr = sample.get("sampling_rate", self.feature_extractor.sampling_rate)
-
-        if isinstance(x, torch.Tensor):
-            # Single waveform tensor
-            assert x.ndim == 1, "Input tensor must be 1D"
-        elif isinstance(x, list):
-            # List of waveform tensors
-            assert all(isinstance(t, torch.Tensor) and t.ndim == 1 for t in x), \
-                "If input is list, each element must be 1D tensor"
-        else:
-            raise ValueError("waveform must be a torch.Tensor or a list of torch.Tensor")
 
         feats = self.feature_extractor(
             x,
             sampling_rate=sr,
             return_tensors="pt",
         )
-        sample["input_features"] = feats["input_features"]
+        x = feats["input_features"]
+        if self.squeeze:
+            x = x.squeeze(0)
+        assert x.ndim == 2, "Input features must be 2D tensor [num_mel_bins=128, seq_len]"
+        sample["input_features"] = x  # [num_mel_bins=128, seq_len]
         return sample
 
 
