@@ -48,6 +48,7 @@ model:
       init_args:
         pre_trained_folder: null
         train_mode: freeze  # also supports lora, or full
+        attn_implementation: sdpa  # or sdpa, or flash_attention_2
       
     emb_transforms:
       - class_path: marble.modules.transforms.LayerSelector

@@ -411,6 +411,7 @@ models/musicnn/MSD_musicnn_big
 models/clmr/downloads
 marble_benchmark.egg-info
 output
+tests/*.wav
 
 ########
 ## Ending custom gitignore rules.
