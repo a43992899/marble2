@@ -175,7 +175,7 @@ class MERT_v1_95M_FeatureExtractor(BaseAudioTransform):
         self.squeeze = squeeze  # If True, squeeze the output to remove extra dimensions
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
-        x = sample["waveform"]
+        x = sample["input_features"]
         assert isinstance(x, torch.Tensor)
         assert x.ndim == 1 or (x.ndim == 2 and x.shape[0] == 1) , "Input must be a 1D tensor (batch_size=1)"
         # while it also supports list of ndarray, we disable it for now
@@ -187,12 +187,12 @@ class MERT_v1_95M_FeatureExtractor(BaseAudioTransform):
             return_tensors="pt",
             padding=True,
         )
-        sample["waveform"] = proc.input_values # [batch_size, num_samples] but batch_size=1
+        sample["input_features"] = proc.input_values # [batch_size, num_samples] but batch_size=1
         if self.squeeze:
             # note that MERT does not have a channel dimension since it is mono
             # better always squeeze the output
-            sample["waveform"] = sample["waveform"].squeeze()
-        assert sample["waveform"].ndim == 1, "Output waveform should be squeezed to 1D tensor"
+            sample["input_features"] = sample["input_features"].squeeze()
+        assert sample["input_features"].ndim == 1, "Output waveform should be squeezed to 1D tensor"
         return sample
 
 

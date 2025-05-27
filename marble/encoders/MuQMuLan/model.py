@@ -99,19 +99,16 @@ class MuQMuLan_Encoder(BaseEncoder):
             *args, **kwargs: Additional arguments passed to the underlying model.
 
         Returns:
-            A BaseModelOutput object containing:
-                - last_hidden_state (torch.FloatTensor): Final-layer representations,
-                  shape (batch_size, seq_len, NUM_FEATURES).
-                - hidden_states (tuple of torch.FloatTensor, optional): All layer outputs
-                  if output_hidden_states=True; each is (batch_size, seq_len, NUM_FEATURES).
-                - attentions (tuple of torch.FloatTensor, optional): Attention maps
-                  if output_attentions=True; each is (batch_size, num_heads, seq_len, seq_len).
+            A Tensor object (batch_size, seq_len, NUM_FEATURES).
         """
         # Ensure input dtype matches model parameters (fp16 vs fp32)
         model_dtype = next(self.model.parameters()).dtype
         wavs = wavs.to(device=self.model.device, dtype=model_dtype)
         
         outputs = self.model(wavs=wavs, texts=texts)
+        
+        # add seq_len dimension
+        outputs = outputs.unsqueeze(1) 
 
         return outputs
 
@@ -120,7 +117,7 @@ class MuQMuLan_Encoder(BaseEncoder):
 if __name__ == "__main__":
     device = 'cuda'
     # fake wav for testing
-    wav = torch.randn(1, 24000 * 10)  # 10 seconds of audio at 24kHz
+    wav = torch.randn(2, 24000 * 10)  # 10 seconds of audio at 24kHz
     wavs = torch.tensor(wav).to(device) 
 
     # This will automatically fetch the checkpoint from huggingface

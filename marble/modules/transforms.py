@@ -36,7 +36,7 @@ class AudioTransformDataset(torch.utils.data.Dataset):
             f"Expected waveform shape [C, T], got {waveform.shape}"
 
         sample = {
-            "waveform": waveform,            # Tensor [C, T]
+            "input_features": waveform,            # Tensor [C, T]
             "sampling_rate": self.sample_rate  # int
         }
 
@@ -45,8 +45,8 @@ class AudioTransformDataset(torch.utils.data.Dataset):
             sample = t(sample)
 
         # final waveform
-        new_wav = sample["waveform"]         # Tensor [C, T] or [T] (for mert)
-        return new_wav, label, path
+        final_input = sample["input_features"]         # Tensor [C, T] or [T] (for mert)
+        return final_input, label, path
 
 
 class AudioLayerNorm(BaseAudioTransform):
@@ -68,7 +68,7 @@ class AudioLayerNorm(BaseAudioTransform):
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # w: [C, T]
-        w = sample["waveform"]
+        w = sample["input_features"]
         mean = w.mean(dim=-1, keepdim=True)  # [C, 1]
         std  = w.std(dim=-1, keepdim=True)   # [C, 1]
         # normalized: [C, T]
@@ -76,7 +76,7 @@ class AudioLayerNorm(BaseAudioTransform):
         if self.affine:
             # broadcast gamma, beta to [C, T]
             w_norm = w_norm * self.gamma + self.beta
-        sample["waveform"] = w_norm          # [C, T]
+        sample["input_features"] = w_norm          # [C, T]
         return sample
     
 
@@ -91,7 +91,7 @@ class RandomCrop(BaseAudioTransform):
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # waveform: [C, T]
-        waveform = sample["waveform"]
+        waveform = sample["input_features"]
         C, T = waveform.shape
         if T <= self.crop_size:
             pad = self.crop_size - T
@@ -101,7 +101,7 @@ class RandomCrop(BaseAudioTransform):
             start = random.randint(0, T - self.crop_size)
             # crop to [C, crop_size]
             waveform = waveform[:, start : start + self.crop_size]
-        sample["waveform"] = waveform       # [C, crop_size]
+        sample["input_features"] = waveform       # [C, crop_size]
         return sample
 
 
@@ -115,14 +115,14 @@ class AddNoise(BaseAudioTransform):
 
     def forward(self, sample):
         # waveform: [C, T]
-        waveform = sample["waveform"]
+        waveform = sample["input_features"]
         # 随机采样一个 SNR
         snr = torch.empty(1).uniform_(self.snr_min, self.snr_max).item() # scalar
         rms = waveform.pow(2).mean().sqrt() # scalar
         # noise: [C, T]
         noise_std = rms / (10 ** (snr / 20))
         noise = torch.randn_like(waveform) * noise_std
-        sample["waveform"] = waveform + noise
+        sample["input_features"] = waveform + noise
         return sample
 
 
@@ -138,9 +138,9 @@ class Resample(BaseAudioTransform):
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # input waveform: [C, T]
-        out = self.resampler(sample["waveform"])
+        out = self.resampler(sample["input_features"])
         # output waveform: [C, T_new]
-        sample["waveform"] = out
+        sample["input_features"] = out
         return sample
 
 
@@ -169,9 +169,9 @@ class Spectrogram(BaseAudioTransform):
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # input waveform: [C, T]
-        S = self.spec(sample["waveform"])
+        S = self.spec(sample["input_features"])
         # spectrogram: [C, F, T']
-        sample["spectrogram"] = S
+        sample["input_features"] = S
         return sample
 
 
@@ -203,9 +203,9 @@ class MelSpectrogram(BaseAudioTransform):
 
     def forward(self, sample: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         # input waveform: [C, T]
-        M = self.melspec(sample["waveform"])
+        M = self.melspec(sample["input_features"])
         # mel spectrogram: [C, n_mels, T']
-        sample["mel_spectrogram"] = M
+        sample["input_features"] = M
         return sample
 
 

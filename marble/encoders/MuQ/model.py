@@ -100,10 +100,7 @@ class MuQ_Encoder(BaseEncoder):
             *args, **kwargs: Additional arguments passed to the underlying model.
 
         Returns:
-            A BaseModelOutput object containing:
-                - last_hidden_state (torch.FloatTensor): Final-layer representations,
-                  shape (batch_size, seq_len, NUM_FEATURES).
-                - hidden_states (tuple of torch.FloatTensor, optional): All layer outputs
+            hidden_states (tuple of torch.FloatTensor, optional): All layer outputs
                   if output_hidden_states=True; each is (batch_size, seq_len, NUM_FEATURES).
         """
         # Ensure input dtype matches model parameters (fp16 vs fp32)
@@ -132,7 +129,6 @@ if __name__ == "__main__":
     with torch.no_grad():
         output = muq(wavs, output_hidden_states=True)
 
-    print('Total number of layers: ', len(output.hidden_states))
-    print('Feature shape: ', output.last_hidden_state.shape)
+    print('Total number of layers: ', len(output))
     
     
