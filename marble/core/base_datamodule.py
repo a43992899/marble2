@@ -43,16 +43,14 @@ class BaseDataModule(pl.LightningDataModule, metaclass=ABCMeta):
         return dataset
 
     def setup(self, stage: str | None = None):
-        if stage in (None, "fit"):
-            # 原始 train/val dataset
-            train_ds = instantiate_from_config(self.train_config)
-            val_ds   = instantiate_from_config(self.val_config)
-            # 分别 wrap
-            self.train_dataset = self._wrap(train_ds, "train")
-            self.val_dataset   = self._wrap(val_ds,   "val")
-        if stage in (None, "test"):
-            test_ds = instantiate_from_config(self.test_config)
-            self.test_dataset = self._wrap(test_ds, "test")
+        # 原始 train/val dataset
+        train_ds = instantiate_from_config(self.train_config)
+        val_ds   = instantiate_from_config(self.val_config)
+        # 分别 wrap
+        self.train_dataset = self._wrap(train_ds, "train")
+        self.val_dataset   = self._wrap(val_ds,   "val")
+        test_ds = instantiate_from_config(self.test_config)
+        self.test_dataset = self._wrap(test_ds, "test")
 
     def train_dataloader(self):
         return DataLoader(
