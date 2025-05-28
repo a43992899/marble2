@@ -1,7 +1,8 @@
-# marble/tasks/GTZANGenre/probe.py
+# marble/tasks/EMO/probe.py
 import torch
 import torch.nn as nn
 import lightning.pytorch as pl
+from torchmetrics import Metric, R2Score, MetricCollection
 
 from marble.core.base_task import BaseTask
 from marble.core.utils import instantiate_from_config
@@ -55,33 +56,56 @@ class ProbeAudioTask(BaseTask):
     def test_step(self, batch, batch_idx):
         x, labels, file_paths = batch
         logits = self(x)
-        probs = torch.softmax(logits, dim=1).cpu()
-        preds = torch.argmax(probs, dim=1)
 
         # Store per-slice probabilities and labels for file-level aggregation
-        for fp, prob, lb in zip(file_paths, probs, labels.cpu()):
+        for fp, logit, lb in zip(file_paths, logits, labels):
             self._test_file_outputs.append({
                 "file_path": fp,
-                "prob": prob.numpy(),
-                "label": int(lb),
+                "logit": logit.detach().to(torch.float32), # (C,)
+                "label": lb.to(torch.float32) # (C,)
             })
+            # print(self._test_file_outputs[-1]['logit'].shape, self._test_file_outputs[-1]['label'])
 
     def on_test_epoch_end(self) -> None:
         # Aggregate per-file predictions
         file_dict: dict[str, dict] = {}
         for entry in self._test_file_outputs:
             fp = entry["file_path"]
-            info = file_dict.setdefault(fp, {"probs": [], "label": entry["label"]})
-            info["probs"].append(entry["prob"])
+            info = file_dict.setdefault(fp, {"logits": [], "label": entry["label"]})
+            info["logits"].append(entry["logit"])
 
-        total, correct = 0, 0
+        # aggregate logits and compute file-level metrics
+        print(f"Aggregating {len(file_dict)} files with per-slice outputs")
+        batched_logits = []
+        batched_labels = []
         for fp, info in file_dict.items():
-            arr = torch.tensor(info["probs"])      # (n_slices, C)
-            mean_prob = arr.mean(dim=0)             # (C,)
-            pred = int(mean_prob.argmax().item())
-            total += 1
-            correct += int(pred == info["label"])
+            arr = torch.stack(info["logits"])      # (n_slices, C)
+            mean_logit = arr.mean(dim=0)             # (C,)
+            batched_logits.append(mean_logit)
+            batched_labels.append(info["label"])
+        batched_logits = torch.stack(batched_logits)
+        batched_labels = torch.stack(batched_labels)
+        # compute metrics
+        mc: MetricCollection = getattr(self, "test_metrics", None)
+        if mc is not None:
+            metrics_out = mc(batched_logits, batched_labels)
+            self.log_dict(metrics_out, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
+            
 
-        file_acc = correct / total if total > 0 else 0.0
-        # Log file-level accuracy with sync across devices
-        self.log("test/file_acc", file_acc, prog_bar=True, on_epoch=True, sync_dist=True)
+
+class SliceR2(Metric):
+    """
+    对 2 维回归输出 y_pred[...,dim] / y[...,dim] 做 R2 评估。
+    """
+    def __init__(self, dim: int, **r2_kwargs):
+        super().__init__()
+        self.dim = dim
+        # 负责具体计算的 R2Score
+        self.inner = R2Score(**r2_kwargs)
+
+    def update(self, preds, targets):
+        # preds: (B,2)，targets: (B,2)
+        self.inner.update(preds[:, self.dim], targets[:, self.dim])
+
+    def compute(self):
+        return self.inner.compute()
