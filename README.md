@@ -50,7 +50,7 @@ Marble is a modular, configuration-driven benchmark suite for evaluating self-su
     pip install -e .
     ```
 
-2. **Prepare data**: Place your datasets and JSONL metadata under `data/`.
+2. **Prepare data**: `python download.py all`.
 
 3. **Configure**: Copy an existing YAML from `configs/` and edit paths, encoder settings, transforms, and task parameters.
 
