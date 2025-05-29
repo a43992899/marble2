@@ -64,7 +64,6 @@ class ProbeAudioTask(BaseTask):
                 "logit": logit.detach().to(torch.float32), # (C,)
                 "label": lb.to(torch.float32) # (C,)
             })
-            # print(self._test_file_outputs[-1]['logit'].shape, self._test_file_outputs[-1]['label'])
 
     def on_test_epoch_end(self) -> None:
         # Aggregate per-file predictions

@@ -6,7 +6,7 @@ trainer:
   accelerator: gpu
   # strategy: ddp # or ddp_find_unused_parameters
   devices: [0]
-  accumulate_grad_batches: 4
+  accumulate_grad_batches: 8
   num_nodes: 1
   precision: bf16 # or 32, or 16
   max_epochs: 100
@@ -17,7 +17,7 @@ trainer:
   callbacks:
     - class_path: lightning.pytorch.callbacks.ModelCheckpoint
       init_args:
-        dirpath: "./output/probe.EMO.MERT-v1-95M/checkpoints/" # Please specify your own path
+        dirpath: "./output/probe.GS.MERT-v1-95M/checkpoints/" # Please specify your own path
         filename: "best"
         save_top_k: 1 # -1 to save all checkpoints
     - class_path: marble.modules.callbacks.LoadLatestCheckpointCallback # for testing
@@ -26,19 +26,19 @@ trainer:
         logging_interval: step
     - class_path: lightning.pytorch.callbacks.early_stopping.EarlyStopping
       init_args:
-        monitor: "val/r2"               # 要监控的 metric 名称
+        monitor: "val/weighted_score"               # 要监控的 metric 名称
         patience: 20                       # 在多少次验证后无改进就停止
         mode: "max"                       # “val_loss” 下降时才算改进
   logger:
     class_path: lightning.pytorch.loggers.WandbLogger
     init_args:
       project: "marble"
-      name: "probe.EMO.MERT-v1-95M"
-      save_dir: "./output/probe.EMO.MERT-v1-95M/"
+      name: "probe.GS.MERT-v1-95M"
+      save_dir: "./output/probe.GS.MERT-v1-95M/"
 
 
 model:
-  class_path: marble.tasks.EMO.probe.ProbeAudioTask
+  class_path: marble.tasks.GS.probe.ProbeAudioTask
   init_args:
     sample_rate: 24000
     use_ema: false
@@ -54,70 +54,54 @@ model:
     emb_transforms:
       - class_path: marble.modules.transforms.LayerSelector
         init_args:
-          layers: [5]  # something like [1, 3, "10..72"]
+          layers: [8]  # something like [1, 3, "10..72"]
       - class_path: marble.modules.transforms.TimeAvgPool # (batch_size, num_layers, 1, hidden_size)
     
     decoders:
       - class_path: marble.modules.decoders.MLPDecoder
         init_args:
           in_dim: 768
-          out_dim: 2 # 2 genres
+          out_dim: 24 # 24 KEYS
           hidden_layers: [512]
           activation_fn: 
             class_path: torch.nn.ReLU
           dropout: 0.2
 
     losses:
-      # regression
-      - class_path: torch.nn.MSELoss
+      - class_path: torch.nn.CrossEntropyLoss
         init_args:
           reduction: mean
 
     metrics:
       train:
-        r2:
-          class_path: torchmetrics.R2Score
+        acc:
+          class_path: torchmetrics.Accuracy
           init_args:
-            multioutput: uniform_average
-        arousal_r2:
-          class_path: marble.tasks.EMO.probe.SliceR2
-          init_args:
-            dim: 0
-        valence_r2:
-          class_path: marble.tasks.EMO.probe.SliceR2
-          init_args:
-            dim: 1
+            num_classes: 24
+            task: multiclass
+        weighted_score:
+          class_path: marble.tasks.GS.probe.KeyWeightedScore
       val:
-        r2:
-          class_path: torchmetrics.R2Score
+        acc:
+          class_path: torchmetrics.Accuracy
           init_args:
-            multioutput: uniform_average
-        arousal_r2:
-          class_path: marble.tasks.EMO.probe.SliceR2
-          init_args:
-            dim: 0
-        valence_r2:
-          class_path: marble.tasks.EMO.probe.SliceR2
-          init_args:
-            dim: 1
+            num_classes: 24
+            task: multiclass
+        weighted_score:
+          class_path: marble.tasks.GS.probe.KeyWeightedScore
       test:
-        r2:
-          class_path: torchmetrics.R2Score
+        acc:
+          class_path: torchmetrics.Accuracy
           init_args:
-            multioutput: uniform_average
-        arousal_r2:
-          class_path: marble.tasks.EMO.probe.SliceR2
-          init_args:
-            dim: 0
-        valence_r2:
-          class_path: marble.tasks.EMO.probe.SliceR2
-          init_args:
-            dim: 1
+            num_classes: 24
+            task: multiclass
+        weighted_score:
+          class_path: marble.tasks.GS.probe.KeyWeightedScore
     
 data:
-  class_path: marble.tasks.EMO.datamodule.EMODataModule
+  class_path: marble.tasks.GS.datamodule.GSDataModule
   init_args:
-    batch_size: 16
+    batch_size: 8
     num_workers: 8
 
     audio_transforms:
@@ -138,37 +122,37 @@ data:
             squeeze: true
 
     train:
-      class_path: marble.tasks.EMO.datamodule.EMOAudioTrain
+      class_path: marble.tasks.GS.datamodule.GSAudioTrain
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: 15
+        clip_seconds: 30
         min_clip_ratio: 0.8 # at least 80% of the clip length
         channel_mode: first # first, random, mix
-        jsonl: data/EMO/EMO.train.jsonl
+        jsonl: data/GS/GS.train.jsonl
     val:
-      class_path: marble.tasks.EMO.datamodule.EMOAudioVal
+      class_path: marble.tasks.GS.datamodule.GSAudioVal
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: 15
+        clip_seconds: 30
         min_clip_ratio: 0.8
         channel_mode: first
-        jsonl: data/EMO/EMO.val.jsonl
+        jsonl: data/GS/GS.val.jsonl
     test:
-      class_path: marble.tasks.EMO.datamodule.EMOAudioTest
+      class_path: marble.tasks.GS.datamodule.GSAudioTest
       init_args:
         sample_rate: 24000
         channels: 1
-        clip_seconds: 15
+        clip_seconds: 30
         min_clip_ratio: 0.8
         channel_mode: first
-        jsonl: data/EMO/EMO.test.jsonl
+        jsonl: data/GS/GS.test.jsonl
 
 optimizer:
   class_path: torch.optim.Adam
   init_args:
-    lr: 1e-3
+    lr: 5e-3
 
 lr_scheduler:
   class_path: lightning.pytorch.cli.ReduceLROnPlateau
@@ -176,4 +160,4 @@ lr_scheduler:
     mode: "max"
     factor: 0.5
     patience: 5
-    monitor: "val/r2"
+    monitor: "val/weighted_score"

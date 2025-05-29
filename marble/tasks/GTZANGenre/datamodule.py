@@ -13,26 +13,27 @@ import lightning.pytorch as pl
 from marble.core.base_datamodule import BaseDataModule
 
 
-LABEL2IDX = {
-    'blues': 0, 'classical': 1, 'country': 2, 'disco': 3,
-    'hiphop': 4, 'jazz': 5, 'metal': 6, 'pop': 7,
-    'reggae': 8, 'rock': 9
-}
-EXAMPLE_JSONL = {
-    "audio_path": "data/GTZAN/genres/blues/blues.00012.wav",
-    "label": "blues",
-    "duration": 30.013333333333332,
-    "sample_rate": 22050,
-    "num_samples": 661794,
-    "bit_depth": 16,
-    "channels": 1
-}
+
 
 class _GTZANGenreAudioBase(Dataset):
     """
     Base dataset for GTZAN genre audio:
     - Splits each audio file into non-overlapping clips of length `clip_seconds` (last clip zero-padded).
     """
+    LABEL2IDX = {
+        'blues': 0, 'classical': 1, 'country': 2, 'disco': 3,
+        'hiphop': 4, 'jazz': 5, 'metal': 6, 'pop': 7,
+        'reggae': 8, 'rock': 9
+    }
+    EXAMPLE_JSONL = {
+        "audio_path": "data/GTZAN/genres/blues/blues.00012.wav",
+        "label": "blues",
+        "duration": 30.013333333333332,
+        "sample_rate": 22050,
+        "num_samples": 661794,
+        "bit_depth": 16,
+        "channels": 1
+    }
     def __init__(
         self,
         sample_rate: int,
@@ -102,7 +103,7 @@ class _GTZANGenreAudioBase(Dataset):
         file_idx, slice_idx, orig_sr, orig_clip, orig_channels = self.index_map[idx]
         info = self.meta[file_idx]
         path = info['audio_path']
-        label = LABEL2IDX[info['label']]
+        label = self.LABEL2IDX[info['label']]
 
         # Compute frame offset and load clip
         offset = slice_idx * orig_clip

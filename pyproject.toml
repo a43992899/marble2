@@ -25,6 +25,7 @@ dependencies = [
     "librosa",
     "omegaconf",
     "wandb",
+    "mir_eval",
     # 安装 Fairseq 前请确保将 pip 降级到 24.0：
     # pip install pip==24.0
     "fairseq",

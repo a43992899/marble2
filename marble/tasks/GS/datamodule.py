@@ -1,4 +1,4 @@
-# marble/tasks/EMO/datamodule.py
+# marble/tasks/GS/datamodule.py
 
 import json
 import random
@@ -16,23 +16,48 @@ from marble.core.base_datamodule import BaseDataModule
 
 
 
-class _EMOAudioBase(Dataset):
+class _GSAudioBase(Dataset):
     """
-    Base dataset for EMO audio:
+    Base dataset for GS audio:
     - Splits each audio file into non-overlapping clips of length `clip_seconds` (last clip zero-padded).
     - This is a regression task with two labels: arousal and valence.
     """
-    LABEL2IDX = {
-        'arousal': 0, 
-        'valence': 1
+    LABEL2IDX = {     # mir_eval format key annotation
+        'C major': 0,
+        'Db major': 1,
+        'D major': 2,
+        'Eb major': 3,
+        'E major': 4,
+        'F major': 5,
+        'Gb major': 6,
+        'G major': 7,
+        'Ab major': 8,
+        'A major': 9,
+        'Bb major': 10,
+        'B major': 11,
+        'C minor': 12,
+        'Db minor': 13,
+        'D minor': 14,
+        'Eb minor': 15,
+        'E minor': 16,
+        'F minor': 17,
+        'Gb minor': 18,
+        'G minor': 19,
+        'Ab minor': 20,
+        'A minor': 21,
+        'Bb minor': 22,
+        'B minor': 23
     }
 
+    IDX2LABEL = {v: k for k, v in LABEL2IDX.items()}
+
     EXAMPLE_JSONL = {
-        "audio_path": "data/EMO/emomusic/wav/0005.wav", 
-        "label": [-0.2568980419200396, 0.25994786922319774], 
-        "duration": 45.01004535147392, 
+        "audio_path": "data/GS/giantsteps_clips/wav/0005061-0.wav", # clips
+        "ori_uid": "0005061", # for ensemble purpose, merge clips to a song
+        "label": "Eb minor", 
+        "duration": 30.0, 
         "sample_rate": 44100, 
-        "num_samples": 1984943, 
+        "num_samples": 1323000, 
         "bit_depth": 16, 
         "channels": 1
     }
@@ -106,7 +131,8 @@ class _EMOAudioBase(Dataset):
         file_idx, slice_idx, orig_sr, orig_clip, orig_channels = self.index_map[idx]
         info = self.meta[file_idx]
         path = info['audio_path']
-        label = torch.from_numpy(np.array(info['label'], dtype=np.float32))  # (2,)
+        ori_uid = info['ori_uid']
+        label = self.LABEL2IDX[info['label']]  # (1,)
 
         # Compute frame offset and load clip
         offset = slice_idx * orig_clip
@@ -149,29 +175,29 @@ class _EMOAudioBase(Dataset):
             waveform = F.pad(waveform, (0, pad))
         
         # Final shape: (self.channels, self.clip_len_target)
-        return waveform, label, path
+        return waveform, label, ori_uid # we do not use path in GS since it is pre split into clips
 
 
-class EMOAudioTrain(_EMOAudioBase):
+class GSAudioTrain(_GSAudioBase):
     """
     训练集：DataModule 中设置 shuffle=True。
     """
     pass
 
 
-class EMOAudioVal(_EMOAudioBase):
+class GSAudioVal(_GSAudioBase):
     """
     验证集：DataModule 中设置 shuffle=False。
     """
     pass
 
 
-class EMOAudioTest(EMOAudioVal):
+class GSAudioTest(GSAudioVal):
     """
     测试集：同验证集逻辑。
     """
     pass
 
 
-class EMODataModule(BaseDataModule):
+class GSDataModule(BaseDataModule):
     pass

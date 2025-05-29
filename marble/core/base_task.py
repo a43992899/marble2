@@ -76,7 +76,7 @@ class BaseTask(LightningModule, ABC):
           - sum all loss_fns
           - log loss and metrics
         """
-        x, y = batch[:2]
+        x, y, uids_or_paths = batch
         logits = self(x)
 
         # compute and log loss
