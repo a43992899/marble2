@@ -412,6 +412,7 @@ models/clmr/downloads
 marble_benchmark.egg-info
 output
 tests/*.wav
+.vscode
 
 ########
 ## Ending custom gitignore rules.

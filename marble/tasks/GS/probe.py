@@ -55,30 +55,46 @@ class ProbeAudioTask(BaseTask):
             sample_rate=sample_rate,
             use_ema=use_ema,
         )
-
+        
+    def on_test_start(self) -> None:
+        # Initialize storage for per-slice test outputs
+        self._test_file_outputs: list[dict] = []
+    
     def test_step(self, batch, batch_idx):
         x, labels, ori_uids = batch
         logits = self(x)
 
-        # Update all test metrics: accuracy, weighted_score, etc.
-        if hasattr(self, "test_metrics"):
-            for metric_name, metric in self.test_metrics.items():
-                # Update each metric with its respective data (logits, labels, UIDs)
-                if isinstance(metric, torchmetrics.Metric):
-                    if metric_name == "weighted_score":
-                        # For KeyWeightedScore, we pass logits, labels, and UIDs
-                        metric.update(logits, labels, ori_uids)
-                    else:
-                        metric.update(logits, labels)
+        for uid, logit, lb in zip(ori_uids, logits, labels):
+            self._test_file_outputs.append({
+                "uid": uid,
+                "logit": logit,
+                "label": lb,
+            })
 
     def on_test_epoch_end(self) -> None:
-        # Instead of manually aggregating the logits, rely on the metric to compute it
-        # Compute the final test metrics, including KeyWeightedScore
+        # Aggregate per-file predictions
+        file_dict: dict[str, dict] = {}
+        for entry in self._test_file_outputs:
+            uid = entry["uid"]
+            info = file_dict.setdefault(uid, {"logits": [], "label": entry["label"]})
+            info["logits"].append(entry["logit"])
+
+        # aggregate logits and compute file-level metrics
+        print(f"Aggregating {len(file_dict)} files with per-slice outputs")
+        batched_logits = []
+        batched_labels = []
+        for uid, info in file_dict.items():
+            arr = torch.stack(info["logits"])      # (n_slices, C)
+            mean_logit = arr.mean(dim=0)             # (C,)
+            batched_logits.append(mean_logit)
+            batched_labels.append(info["label"])
+        batched_logits = torch.stack(batched_logits)
+        batched_labels = torch.stack(batched_labels)
+        # compute metrics
         mc: MetricCollection = getattr(self, "test_metrics", None)
         if mc is not None:
-            metrics_out = mc.compute()  # Metrics will be computed at the UID level internally
+            metrics_out = mc(batched_logits, batched_labels)
             self.log_dict(metrics_out, prog_bar=True, on_step=False, on_epoch=True, sync_dist=True)
-
 
 
 class KeyWeightedScore(Metric):
@@ -93,75 +109,33 @@ class KeyWeightedScore(Metric):
         super().__init__()
         self.add_state("preds", default=[], dist_reduce_fx="cat")
         self.add_state("labels", default=[], dist_reduce_fx="cat")
-        self.add_state("uids", default=[], dist_reduce_fx="cat")
 
-    def update(self, preds: torch.Tensor, labels: torch.Tensor, uids: torch.Tensor = None):
+    def update(self, preds: torch.Tensor, labels: torch.Tensor):
         """
-        Update the metric with predictions, ground truth labels, and file-level UID.
-        If uids is None, no aggregation will be performed.
-        Ensure all tensors are on the same device.
+        Update the metric with predictions and ground truth labels.
         """
         device = preds.device  # Use the device of preds to ensure consistency
         self.preds.append(preds.to(device))
         self.labels.append(labels.to(device))
-        
-        if uids is not None:
-            self.uids.append(uids.to(device))
-        else:
-            # If uids is None, no aggregation will be done
-            self.uids.append(None)
 
     def compute(self):
         """
-        Compute the weighted score using mir_eval after aggregating predictions at the UID level.
-        If uids is None, compute the score directly on the predictions and labels without aggregation.
+        Compute the weighted score using mir_eval without the need for aggregation.
+        Assumes the inputs have already been aggregated.
         """
         preds = torch.cat(self.preds, dim=0)
         labels = torch.cat(self.labels, dim=0)
-        uids = self.uids
-
-        # Ensure everything is on the same device as the model (GPU or CPU)
-        device = preds.device
-        preds = preds.to(device)
-        labels = labels.to(device)
-
-        if uids[0] is not None:
-            # If uids is not None, aggregate predictions and labels at the UID level
-            uids = torch.cat(uids, dim=0)
-            unique_uids = torch.unique(uids)
-            aggregated_preds = []
-            aggregated_labels = []
-
-            for uid in unique_uids:
-                # Get the indices of the current UID
-                indices = (uids == uid).nonzero(as_tuple=True)[0]
-                # Aggregate logits by averaging the slices for each UID
-                uid_preds = preds[indices].mean(dim=0)
-                uid_labels = labels[indices][0]  # Assuming labels are the same for all slices of a file
-
-                aggregated_preds.append(uid_preds)
-                aggregated_labels.append(uid_labels)
-
-            # Convert lists to tensors
-            aggregated_preds = torch.stack(aggregated_preds).to(device)
-            aggregated_labels = torch.stack(aggregated_labels).to(device)
-
-        else:
-            # If uids is None, no aggregation; compute directly on the logits and labels
-            aggregated_preds = preds
-            aggregated_labels = labels
 
         # Convert logits to predicted labels
-        preds_label = torch.argmax(aggregated_preds, dim=-1)
+        preds_label = torch.argmax(preds, dim=-1)
 
         # Convert to numpy for mir_eval
         preds_label = preds_label.cpu().numpy()
-        aggregated_labels = aggregated_labels.cpu().numpy()
+        labels = labels.cpu().numpy()
 
         # Calculate the weighted score
         scores = [
             mir_eval.key.weighted_score(self.IDX2LABEL[ref_key], self.IDX2LABEL[est_key])
-            for ref_key, est_key in zip(aggregated_labels, preds_label)
+            for ref_key, est_key in zip(labels, preds_label)
         ]
-        return torch.tensor(np.mean(scores), device=device)
-
+        return torch.tensor(np.mean(scores), device=preds.device)
