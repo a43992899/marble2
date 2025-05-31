@@ -43,11 +43,12 @@ Marble is a modular, configuration-driven benchmark suite for evaluating self-su
     # 2. install ffmpeg
     conda install -c conda-forge ffmpeg -y
 
-    # 3. downgrade pip to 24.0（Since we have some Fairseq models）
-    pip install pip==24.0
-
-    # 4. now install other dependencies
+    # 3. now install other dependencies
     pip install -e .
+
+    # 4. [Optional] downgrade pip to 24.0 if you are using fairseq modules
+    # pip install pip==24.0
+    # pip install fairseq
     ```
 
 2. **Prepare data**: `python download.py all`.

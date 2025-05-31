@@ -2,12 +2,19 @@
 # conda install ffmpeg
 
 [build-system]
-requires = ["setuptools>=42", "wheel"]
+requires = [
+  "setuptools>=42",
+  "wheel",
+  "cython>=0.29",
+  "numpy>=1.19",
+  "scipy>=1.5"
+]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "marble"
 version = "0.2.0"
+dynamic = ["description", "requires-python"]
 authors = [
   { name = "Ruibin Yuan"},
 ]
@@ -29,7 +36,7 @@ dependencies = [
     "mir_eval",
     # 安装 Fairseq 前请确保将 pip 降级到 24.0：
     # pip install pip==24.0
-    "fairseq",
+    # "fairseq",
 ]
 
 [tool.setuptools.packages.find]

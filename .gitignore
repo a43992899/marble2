@@ -413,6 +413,7 @@ marble_benchmark.egg-info
 output
 tests/*.wav
 .vscode
+marble/tasks/GTZANBeatTracking/madmom/hmm.c
 
 ########
 ## Ending custom gitignore rules.
